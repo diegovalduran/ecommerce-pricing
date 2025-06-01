@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { performSearch } from '@/lib/search/search-service';
 
 interface PriceData {
@@ -21,7 +22,7 @@ interface PriceInsight {
   impact: 'positive' | 'negative' | 'neutral';
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const startTime = performance.now();
   const stats = {
     timings: {
@@ -47,44 +48,28 @@ export async function POST(req: Request) {
   try {
     console.log('Price recommendation API called');
     const body = await req.json();
-    const { query, description, category, "analyzed description": analyzedDescription, imageSearch } = body;
+    const { query, description, category, analyzedDescription, imageSearch } = body;
     
-    console.log('Request data:', { query, description, category, analyzedDescription, imageSearch });
+    console.log('Request data:', body);
 
-    // Only require query if not doing an image search
-    if (!imageSearch && !query) {
-      console.log('Error: Product query is required for text search');
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Product query is required for text search' 
-      }, { status: 400 });
+    if (!query && !analyzedDescription) {
+      return NextResponse.json(
+        { success: false, error: 'Either query or analyzedDescription is required' },
+        { status: 400 }
+      );
     }
 
-    // Construct a comprehensive search query
-    const searchQuery = [
-      query || "Image Search",
-      description || '',
-      category || ''
-    ].filter(Boolean).join(' ');
-
-    console.log(`Searching for: "${searchQuery}"`);
-
-    // Use our search service directly
-    const searchStartTime = performance.now();
-    console.log('Calling search service with query:', searchQuery);
-    const hasImageAnalysis = !!analyzedDescription;
+    console.log('Searching for:', query ? `"${query}"` : 'analyzed image');
+    console.log('Calling search service with query:', query);
     
+    // Call search service with the request object
     const searchResults = await performSearch({
-      query: searchQuery,
-      ...(hasImageAnalysis && { 
-        analyzedDescription, 
-        imageSearch: true 
-      })
+      query,
+      analyzedDescription,
+      imageSearch,
+      request: req
     });
     
-    stats.timings.search = performance.now() - searchStartTime;
-    console.log(`Search completed in ${stats.timings.search.toFixed(2)}ms`);
-
     if (!searchResults.success) {
       console.error('Search service returned error:', searchResults.error);
       throw new Error(searchResults.error || 'Search failed');
@@ -202,7 +187,7 @@ export async function POST(req: Request) {
       `Analysis completed in ${(performance.now() - startTime).toFixed(2)}ms`
     ];
 
-    stats.timings.analysis = performance.now() - (searchStartTime + stats.timings.search);
+    stats.timings.analysis = performance.now() - (performance.now() - startTime);
     stats.timings.total = performance.now() - startTime;
 
     return NextResponse.json({

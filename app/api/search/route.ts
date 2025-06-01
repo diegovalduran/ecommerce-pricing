@@ -1,24 +1,34 @@
 import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { performSearch } from '@/lib/search/search-service';
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  console.log('Search API called');
+  let body: any;
+  
   try {
-    console.log('Search API called');
-    const body = await req.json();
+    body = await req.json();
+    console.log('Search request body:', body);
+    
     const { query, analyzedDescription, imageSearch } = body;
     
-    const searchResults = await performSearch({
+    const results = await performSearch({
       query,
       analyzedDescription,
-      imageSearch
+      imageSearch,
+      request: req
     });
     
-    return NextResponse.json(searchResults);
+    return NextResponse.json(results);
   } catch (error) {
     console.error('Search error:', error);
-    return NextResponse.json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    }, { status: 500 });
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'An error occurred during search',
+        query: body?.query || 'unknown'
+      },
+      { status: 500 }
+    );
   }
 }

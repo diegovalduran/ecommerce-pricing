@@ -1,6 +1,7 @@
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from "@/lib/firebase/config";
 import { findSimilarProducts, findSimilarProductsByImage } from '@/utils/text-similarity';
+import { NextRequest } from 'next/server';
 
 export interface SearchResults {
   success: boolean;
@@ -26,9 +27,14 @@ export interface SearchResults {
   collectionStats: Record<string, number | string>;
 }
 
-async function getCollections(): Promise<string[]> {
+async function getCollections(request?: NextRequest): Promise<string[]> {
   try {
-    const response = await fetch('/api/collections');
+    // Construct the full URL using the request's URL
+    const baseUrl = request ? new URL(request.url).origin : '';
+    const apiUrl = `${baseUrl}/api/collections`;
+    console.log('Fetching collections from:', apiUrl);
+    
+    const response = await fetch(apiUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch collections: ${response.status}`);
     }
@@ -49,8 +55,9 @@ export async function performSearch(params: {
   query?: string;
   analyzedDescription?: any;
   imageSearch?: boolean;
+  request?: NextRequest;
 }): Promise<SearchResults> {
-  const { query = "Image Search", analyzedDescription, imageSearch } = params;
+  const { query = "Image Search", analyzedDescription, imageSearch, request } = params;
   
   console.log('Search service called with:', { query, imageSearch });
   if (imageSearch && analyzedDescription) {
@@ -64,7 +71,7 @@ export async function performSearch(params: {
 
   // Get all collections
   console.log('Fetching available collections...');
-  const collections = await getCollections();
+  const collections = await getCollections(request);
   console.log(`Found ${collections.length} collections:`, collections);
 
   let similarProducts = [];
