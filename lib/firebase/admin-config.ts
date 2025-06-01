@@ -31,13 +31,20 @@ const settings: Settings = {
   ignoreUndefinedProperties: true,
   timeoutSeconds: 15,
   maxRetries: 2,
-  // Only set autoPaginate to false, remove all other pagination-related settings
-  autoPaginate: false
+  autoPaginate: false,
+  // Explicitly set these to override internal SDK settings
+  maxResults: 1000,  // Limit results per query
+  isBundling: false, // Disable bundling to prevent internal settings override
+  // Force these settings to take precedence
+  experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: false
 };
 
 // Export the Firestore admin instance with custom settings
 export const adminDb = getFirestore(getApps()[0]);
+
+// Apply settings
 adminDb.settings(settings);
 
-// Log the settings for debugging
+// Log the settings we attempted to apply
 console.log('Firestore settings applied:', settings);
