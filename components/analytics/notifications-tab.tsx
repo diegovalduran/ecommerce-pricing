@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Bell, AlertTriangle, TrendingUp, TrendingDown, DollarSign, Users } from "lucide-react"
 
-const notificationTypes = [
+type NotificationType = "account" | "security" | "performance" | "market" | "financial" | "user";
+
+const notificationTypes: Array<{ id: NotificationType; label: string; icon: any }> = [
   { id: "account", label: "Account Activity", icon: Bell },
   { id: "security", label: "Security Alerts", icon: AlertTriangle },
   { id: "performance", label: "Performance Updates", icon: TrendingUp },
@@ -25,7 +27,7 @@ export function NotificationsTab() {
     user: false,
   })
 
-  const toggleNotification = (id) => {
+  const toggleNotification = (id: NotificationType) => {
     setNotifications((prev) => ({ ...prev, [id]: !prev[id] }))
   }
 
@@ -42,7 +44,7 @@ export function NotificationsTab() {
                 <type.icon className="h-5 w-5 text-muted-foreground" />
                 <span className="text-sm font-medium">{type.label}</span>
               </div>
-              <Switch checked={notifications[type.id]} onCheckedChange={() => toggleNotification(type.id)} />
+              <Switch checked={notifications[type.id as NotificationType]} onCheckedChange={() => toggleNotification(type.id as NotificationType)} />
             </div>
           ))}
         </CardContent>

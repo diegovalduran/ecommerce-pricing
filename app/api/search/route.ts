@@ -234,7 +234,7 @@ export async function POST(req: Request) {
       .slice(0, 10)
       .map(product => ({
         ...product,
-        matchDetails: product.matchDetails || product.debug // Include the match details
+        matchDetails: product.matchDetails || ('debug' in product ? (product as any).debug : undefined) // Include the match details
       })) as Array<{
         id: string;
         name: string;
