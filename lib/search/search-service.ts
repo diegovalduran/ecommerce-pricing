@@ -1,4 +1,4 @@
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, limit, startAfter, Query, DocumentData, QueryDocumentSnapshot, CollectionReference as ClientCollectionRef, QueryConstraint } from 'firebase/firestore';
 import { db } from "@/lib/firebase/config";
 import { findSimilarProducts, findSimilarProductsByImage } from '@/utils/text-similarity';
 import { NextRequest } from 'next/server';
@@ -27,6 +27,12 @@ export interface SearchResults {
   totalResults: number;
   totalProducts: number;
   collectionStats: Record<string, number | string>;
+}
+
+interface Product {
+  id: string;
+  collection: string;
+  [key: string]: any;
 }
 
 // Map of common product categories and their variations
@@ -215,14 +221,27 @@ function getCategoryVariations(query: string): string[] {
   return Array.from(variations);
 }
 
+// Add timeout utility
+const withTimeout = async (promise: Promise<any>, timeoutMs: number) => {
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Operation timed out')), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]);
+};
+
+// Add type for collection scoring
+interface ScoredCollection {
+  name: string;
+  score: number;
+}
+
 async function getRelevantCollections(query: string): Promise<string[]> {
   try {
     console.log('Fetching collections using admin SDK...');
-    const collections = await adminDb.listCollections();
+    const collections = await withTimeout(adminDb.listCollections(), 60000);
     const collectionNames = collections.map((col: CollectionReference) => col.id);
     console.log(`Found ${collectionNames.length} total collections`);
     
-    // Filter out system collections
     const filteredCollections = collectionNames.filter((name: string) => 
       name !== "products" && 
       name !== "Dashboard Inputs" && 
@@ -231,16 +250,13 @@ async function getRelevantCollections(query: string): Promise<string[]> {
     );
     console.log(`Filtered to ${filteredCollections.length} non-system collections`);
 
-    // If it's a text search, try to find relevant collections based on the query
     if (query && query !== "Image Search") {
       const variations = getCategoryVariations(query);
       console.log('Searching with category variations:', variations);
       
-      // Score collections based on relevance to the query
-      const scoredCollections = filteredCollections.map(name => {
+      const scoredCollections: ScoredCollection[] = filteredCollections.map((name: string) => {
         const nameLower = name.toLowerCase();
-        const score = variations.reduce((total, variant) => {
-          // Give higher score for exact matches and matches at the start of words
+        const score = variations.reduce((total: number, variant: string) => {
           if (nameLower === variant) return total + 3;
           if (nameLower.includes(`-${variant}-`) || nameLower.startsWith(`${variant}-`) || nameLower.endsWith(`-${variant}`)) {
             return total + 2;
@@ -251,21 +267,17 @@ async function getRelevantCollections(query: string): Promise<string[]> {
         return { name, score };
       });
 
-      // Sort by score and take top 10
       const relevantCollections = scoredCollections
-        .sort((a, b) => b.score - a.score)
+        .sort((a: ScoredCollection, b: ScoredCollection) => b.score - a.score)
         .slice(0, 10)
-        .map(c => c.name);
+        .map((c: ScoredCollection) => c.name);
 
       if (relevantCollections.length > 0) {
         console.log(`Found ${relevantCollections.length} most relevant collections for query "${query}"`);
-        console.log('Relevant collections:', relevantCollections);
         return relevantCollections;
       }
     }
     
-    // If no relevant collections found or no query provided, use a limited set of collections
-    // Sort by name to ensure consistent results
     const limitedCollections = filteredCollections
       .sort()
       .slice(0, 10);
@@ -285,7 +297,7 @@ export async function performSearch(params: {
   request?: NextRequest;
 }): Promise<SearchResults> {
   const { query = "Image Search", analyzedDescription } = params;
-  let { imageSearch } = params; // Make imageSearch mutable
+  let { imageSearch } = params;
   
   console.log('Search service called with:', { query, imageSearch });
   
@@ -299,21 +311,17 @@ export async function performSearch(params: {
     
     if (!hasValidAnalysis) {
       console.log('Invalid or incomplete image analysis data - falling back to text search');
-      // Override imageSearch to false if analysis data is invalid
       imageSearch = false;
-    } else {
-      console.log('Image analysis provided:', JSON.stringify(analyzedDescription, null, 2));
     }
   }
 
-  // Only require query if not doing an image search
   if (!imageSearch && !query) {
     throw new Error('Search query is required for text search');
   }
 
-  // Get relevant collections based on the query
+  // Get relevant collections with timeout
   console.log('Fetching relevant collections...');
-  const collections = await getRelevantCollections(query);
+  const collections = await withTimeout(getRelevantCollections(query), 60000); // 60 second timeout
   console.log(`Found ${collections.length} collections to search`);
 
   let similarProducts = [];
@@ -321,34 +329,84 @@ export async function performSearch(params: {
   let collectionStats: Record<string, number | string> = {};
   let isHybridSearch = false;
   
-  // Fetch products from collections in parallel with a limit
-  console.log('Starting to fetch from collections...');
-  const BATCH_SIZE = 3; // Process 3 collections at a time
-  
+  // Process collections in smaller batches
+  const BATCH_SIZE = 2; // Reduced from 3 to 2
+  const PRODUCT_BATCH_SIZE = 50; // Reduced from 100 to 50
+  const MAX_RETRIES = 3;
+
   for (let i = 0; i < collections.length; i += BATCH_SIZE) {
     const batch = collections.slice(i, i + BATCH_SIZE);
-    const batchPromises = batch.map(async (collectionName) => {
-      try {
-        console.log(`Fetching from collection: ${collectionName}`);
-        const querySnapshot = await getDocs(collection(db, collectionName));
-        const products = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          collection: collectionName,
-          ...doc.data()
-        }));
-        
-        collectionStats[collectionName] = products.length;
-        return products;
-      } catch (error) {
-        console.error(`Error fetching from ${collectionName}:`, error);
-        collectionStats[collectionName] = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
-        return [];
+    const batchPromises = batch.map(async (collectionName: string) => {
+      let retryCount = 0;
+      
+      while (retryCount < MAX_RETRIES) {
+        try {
+          console.log(`Fetching from collection: ${collectionName}`);
+          let allProducts: Product[] = [];
+          let lastDoc: QueryDocumentSnapshot<DocumentData> | null = null;
+          let hasMore = true;
+
+          while (hasMore) {
+            const collectionRef = collection(db, collectionName) as ClientCollectionRef<DocumentData>;
+            const constraints: QueryConstraint[] = [limit(PRODUCT_BATCH_SIZE)];
+            
+            if (lastDoc) {
+              constraints.unshift(startAfter(lastDoc));
+            }
+            
+            const q = (query as any)(collectionRef, ...constraints) as Query<DocumentData>;
+            
+            // Add timeout to getDocs
+            const querySnapshot = await withTimeout(getDocs(q), 60000); // 60 second timeout
+            
+            const products: Product[] = querySnapshot.docs.map((doc: QueryDocumentSnapshot<DocumentData>) => {
+              const data = doc.data() as DocumentData;
+              return {
+                id: doc.id,
+                collection: collectionName,
+                ...data
+              };
+            });
+            
+            allProducts = allProducts.concat(products);
+            lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] as QueryDocumentSnapshot<DocumentData>;
+            hasMore = querySnapshot.docs.length === PRODUCT_BATCH_SIZE;
+          }
+          
+          collectionStats[collectionName] = allProducts.length;
+          return allProducts;
+        } catch (error) {
+          console.error(`Error fetching from ${collectionName} (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
+          retryCount++;
+          
+          if (retryCount >= MAX_RETRIES) {
+            collectionStats[collectionName] = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+            return [];
+          }
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000)));
+        }
       }
+      
+      return [];
     });
 
-    const batchResults = await Promise.all(batchPromises);
-    allProducts.push(...batchResults.flat());
-    console.log(`Processed batch ${i/BATCH_SIZE + 1} of ${Math.ceil(collections.length/BATCH_SIZE)}`);
+    try {
+      // Add timeout for each batch
+      const batchResults = await withTimeout(Promise.all(batchPromises), 60000); // 60 second timeout per batch
+      allProducts.push(...batchResults.flat());
+      console.log(`Processed batch ${i/BATCH_SIZE + 1} of ${Math.ceil(collections.length/BATCH_SIZE)}`);
+    } catch (error) {
+      console.error(`Error processing batch ${i/BATCH_SIZE + 1}:`, error);
+      // Continue with next batch even if this one failed
+      continue;
+    }
+    
+    // Add delay between batches
+    if (i + BATCH_SIZE < collections.length) {
+      await new Promise(resolve => setTimeout(resolve, 500)); // Keep 500ms delay between batches
+    }
   }
   
   console.log('Collection stats:', collectionStats);

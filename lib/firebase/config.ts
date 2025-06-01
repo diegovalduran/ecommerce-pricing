@@ -1,6 +1,6 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 // Your web app's Firebase configuration
@@ -17,16 +17,11 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-// Configure Firestore with pagination settings
-const db = getFirestore(app);
-db.settings({
-  cacheSizeBytes: 50 * 1024 * 1024, // 50 MB cache
-  experimentalForceLongPolling: true, // Use long polling for better reliability
+// Initialize Firestore with custom settings
+const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
   experimentalAutoDetectLongPolling: true,
-  ignoreUndefinedProperties: true,
-  // Add pagination settings
-  experimentalForcePagination: true,
-  experimentalMaxBatchSize: 1000
+  cacheSizeBytes: 50 * 1024 * 1024 // 50 MB cache
 });
 
 const storage = getStorage(app);

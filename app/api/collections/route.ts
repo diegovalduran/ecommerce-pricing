@@ -1,24 +1,33 @@
 import { NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase/admin-config'
 
-// Helper function to get collection details with pagination
+// Helper function to get collection details with pagination and timeout
 async function getCollectionDetails(name: string) {
   try {
+    // Set a timeout for the entire operation
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Operation timed out')), 60000); // 60 second timeout
+    });
+
     // Get count with pagination
-    const snapshot = await adminDb.collection(name)
-      .limit(1000) // Limit to 1000 documents for count
+    const countPromise = adminDb.collection(name)
+      .limit(1000)
       .count()
-      .get()
-    const totalProducts = snapshot.data().count
+      .get();
+
+    // Race between the operation and timeout
+    const snapshot = await Promise.race([countPromise, timeoutPromise]) as any;
+    const totalProducts = snapshot.data().count;
 
     // Get the most recent document with pagination
-    const lastDoc = await adminDb.collection(name)
+    const lastDocPromise = adminDb.collection(name)
       .orderBy('scrapedAt', 'desc')
       .limit(1)
-      .get()
+      .get();
 
+    const lastDoc = await Promise.race([lastDocPromise, timeoutPromise]) as any;
     const lastUpdated = lastDoc.empty ? Date.now() : 
-      new Date(lastDoc.docs[0].data().scrapedAt).getTime()
+      new Date(lastDoc.docs[0].data().scrapedAt).getTime();
 
     return {
       name,
@@ -42,37 +51,51 @@ export async function GET() {
     const collectionNames = collections.map(col => col.id)
       .filter(name => name !== "products" && name !== "Dashboard Inputs" && name !== "recent-scrapes")
 
-    // Process collections in batches to prevent timeouts
-    const BATCH_SIZE = 5
+    // Process collections in smaller batches to prevent timeouts
+    const BATCH_SIZE = 3 // Reduced from 5 to 3
     const collectionDetails = []
     
     for (let i = 0; i < collectionNames.length; i += BATCH_SIZE) {
       const batch = collectionNames.slice(i, i + BATCH_SIZE)
-      const batchResults = await Promise.all(
+      
+      // Add timeout for each batch
+      const batchPromise = Promise.all(
         batch.map(name => getCollectionDetails(name))
-      )
-      collectionDetails.push(...batchResults)
+      );
+      
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Batch operation timed out')), 60000); // 60 second timeout per batch
+      });
+
+      try {
+        const batchResults = await Promise.race([batchPromise, timeoutPromise]) as any[];
+        collectionDetails.push(...batchResults);
+      } catch (error) {
+        console.error(`Error processing batch ${i/BATCH_SIZE + 1}:`, error);
+        // Continue with next batch even if this one failed
+        continue;
+      }
       
       // Add a small delay between batches to prevent rate limiting
       if (i + BATCH_SIZE < collectionNames.length) {
-        await new Promise(resolve => setTimeout(resolve, 100))
+        await new Promise(resolve => setTimeout(resolve, 200)); // Keep 200ms delay between batches
       }
     }
 
-    // Set cache headers
+    // Set cache headers with longer duration
     const response = NextResponse.json({
       collections: collectionNames,
       details: collectionDetails
     })
 
-    // Cache for 5 minutes
-    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
+    // Cache for 10 minutes (increased from 5)
+    response.headers.set('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1200')
 
     return response
   } catch (error) {
     console.error('Error fetching collections:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch collections' },
+      { error: 'Failed to fetch collections', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }

@@ -10,7 +10,8 @@ import {
   orderBy,
   limit,
   Timestamp,
-  deleteDoc 
+  deleteDoc,
+  startAfter
 } from 'firebase/firestore'
 
 const firebaseConfig = {
