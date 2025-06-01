@@ -22,6 +22,9 @@ interface PriceInsight {
   impact: 'positive' | 'negative' | 'neutral';
 }
 
+// Set max duration to 5 minutes (300 seconds)
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
   const startTime = performance.now();
   const stats = {
