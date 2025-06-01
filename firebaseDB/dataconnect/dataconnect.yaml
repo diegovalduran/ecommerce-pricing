@@ -1,0 +1,12 @@
+specVersion: "v1beta"
+serviceId: "2025-gdx-2"
+location: "us-central1"
+schema:
+  source: "./schema"
+  datasource:
+    postgresql:
+      database: "fdcdb"
+      cloudSql:
+        instanceId: "2025-gdx-2-fdc"
+      # schemaValidation: "COMPATIBLE"
+connectorDirs: ["./connector"]

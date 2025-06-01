@@ -1,0 +1,79 @@
+# # Example mutations for a simple movie app
+
+# # Create a movie based on user input
+# mutation CreateMovie($title: String!, $genre: String!, $imageUrl: String!)
+# @auth(level: USER_EMAIL_VERIFIED) {
+#   movie_insert(data: { title: $title, genre: $genre, imageUrl: $imageUrl })
+# }
+
+# # Upsert (update or insert) a user's username based on their auth.uid
+# mutation UpsertUser($username: String!) @auth(level: USER) {
+#   # The "auth.uid" server value ensures that users can only register their own user.
+#   user_upsert(data: { id_expr: "auth.uid", username: $username })
+# }
+
+# # Add a review for a movie
+# mutation AddReview($movieId: UUID!, $rating: Int!, $reviewText: String!)
+# @auth(level: USER) {
+#   review_upsert(
+#     data: {
+#       userId_expr: "auth.uid"
+#       movieId: $movieId
+#       rating: $rating
+#       reviewText: $reviewText
+#       # reviewDate defaults to today in the schema. No need to set it manually.
+#     }
+#   )
+# }
+
+# # Logged in user can delete their review for a movie
+# mutation DeleteReview($movieId: UUID!) @auth(level: USER) {
+#   # The "auth.uid" server value ensures that users can only delete their own reviews.
+#   review_delete(key: { userId_expr: "auth.uid", movieId: $movieId })
+# }
+
+mutation UpsertProduct(
+  $id: String!,
+  $name: String!,
+  $storeName: String,
+  $storeRegion: String,
+  $currentPrice: Float!,
+  $normalPrice: Float,
+  $discount: Float,
+  $discountPercentage: Float,
+  $currency: String!,
+  $ratingAverage: Float,
+  $ratingCount: Int,
+  $productType: String,
+  $mainCategory: String,
+  $sub1Category: String,
+  $sub2Category: String,
+  $sub3Category: String,
+  $stockStatus: String,
+  $mainImage: String!,
+  $hoverImage: String,
+  $productUrl: String!
+) @auth(level: PUBLIC) {
+  product_upsert(data: {
+    id: $id,
+    name: $name,
+    storeName: $storeName,
+    storeRegion: $storeRegion,
+    currentPrice: $currentPrice,
+    normalPrice: $normalPrice,
+    discount: $discount,
+    discountPercentage: $discountPercentage,
+    currency: $currency,
+    ratingAverage: $ratingAverage,
+    ratingCount: $ratingCount,
+    productType: $productType,
+    mainCategory: $mainCategory,
+    sub1Category: $sub1Category,
+    sub2Category: $sub2Category,
+    sub3Category: $sub3Category,
+    stockStatus: $stockStatus,
+    mainImage: $mainImage,
+    hoverImage: $hoverImage,
+    productUrl: $productUrl
+  })
+}
