@@ -1,5 +1,6 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, Settings } from 'firebase-admin/firestore';
+import { CallOptions } from 'google-gax';
 
 // Initialize Firebase Admin
 const apps = getApps();
@@ -26,4 +27,34 @@ if (!apps.length) {
   }
 }
 
-export const adminDb = getFirestore(getApps()[0]);
+// Configure Firestore with minimal settings
+const settings: Settings = {
+  ignoreUndefinedProperties: true,
+  // Use GAX client settings to override internal defaults
+  gaxOptions: {
+    autoPaginate: false,
+    maxResults: 1000,
+    isBundling: false,
+    timeout: 15000, // 15 seconds
+    retry: {
+      retryCodes: [4, 8, 13, 14], // Resource exhausted, deadline exceeded, etc.
+      backoffSettings: {
+        initialRetryDelayMillis: 100,
+        retryDelayMultiplier: 1.3,
+        maxRetryDelayMillis: 15000,
+        initialRpcTimeoutMillis: 15000,
+        rpcTimeoutMultiplier: 1,
+        maxRpcTimeoutMillis: 15000,
+        totalTimeoutMillis: 15000
+      }
+    }
+  } as CallOptions
+};
+
+// Initialize Firestore with settings and export
+export const adminDb = (() => {
+  const db = getFirestore(getApps()[0]);
+  db.settings(settings);
+  console.log('Firestore settings applied:', settings);
+  return db;
+})();
