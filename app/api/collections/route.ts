@@ -39,24 +39,42 @@ async function getCollectionDetails(name: string) {
     return {
       name,
       totalProducts: 0,
-      lastUpdated: Date.now()
+      lastUpdated: Date.now(),
+      error: error instanceof Error ? error.message : 'Unknown error'
     }
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    // Get URL parameters for pagination
+    const url = new URL(request.url);
+    const page = parseInt(url.searchParams.get('page') || '1');
+    const pageSize = parseInt(url.searchParams.get('pageSize') || '10');
+    const skip = (page - 1) * pageSize;
+
     // Get all collections with pagination
-    const collections = await adminDb.listCollections()
-    const collectionNames = collections.map(col => col.id)
-      .filter(name => name !== "products" && name !== "Dashboard Inputs" && name !== "recent-scrapes")
+    const collections = await adminDb.listCollections();
+    const collectionNames = collections
+      .map(col => col.id)
+      .filter(name => 
+        name !== "products" && 
+        name !== "Dashboard Inputs" && 
+        name !== "recent-scrapes" &&
+        name !== "batchJobs"
+      );
+
+    // Calculate pagination
+    const totalCollections = collectionNames.length;
+    const totalPages = Math.ceil(totalCollections / pageSize);
+    const paginatedCollections = collectionNames.slice(skip, skip + pageSize);
 
     // Process collections in smaller batches to prevent timeouts
-    const BATCH_SIZE = 3 // Reduced from 5 to 3
-    const collectionDetails = []
+    const BATCH_SIZE = 3; // Process 3 collections at a time
+    const collectionDetails = [];
     
-    for (let i = 0; i < collectionNames.length; i += BATCH_SIZE) {
-      const batch = collectionNames.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < paginatedCollections.length; i += BATCH_SIZE) {
+      const batch = paginatedCollections.slice(i, i + BATCH_SIZE);
       
       // Add timeout for each batch
       const batchPromise = Promise.all(
@@ -64,7 +82,7 @@ export async function GET() {
       );
       
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Batch operation timed out')), 60000); // 60 second timeout per batch
+        setTimeout(() => reject(new Error('Batch operation timed out')), 60000);
       });
 
       try {
@@ -77,27 +95,37 @@ export async function GET() {
       }
       
       // Add a small delay between batches to prevent rate limiting
-      if (i + BATCH_SIZE < collectionNames.length) {
-        await new Promise(resolve => setTimeout(resolve, 200)); // Keep 200ms delay between batches
+      if (i + BATCH_SIZE < paginatedCollections.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
 
     // Set cache headers with longer duration
     const response = NextResponse.json({
-      collections: collectionNames,
-      details: collectionDetails
-    })
+      collections: paginatedCollections,
+      details: collectionDetails,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCollections,
+        pageSize,
+        hasMore: page < totalPages
+      }
+    });
 
-    // Cache for 10 minutes (increased from 5)
-    response.headers.set('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1200')
+    // Cache for 10 minutes
+    response.headers.set('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1200');
 
-    return response
+    return response;
   } catch (error) {
-    console.error('Error fetching collections:', error)
+    console.error('Error in collections API:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch collections', details: error instanceof Error ? error.message : 'Unknown error' },
+      { 
+        error: 'Failed to fetch collections',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
-    )
+    );
   }
 }
 

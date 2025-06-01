@@ -33,39 +33,39 @@ const settings: Settings = {
   // Use GAX client settings to override internal defaults
   gaxOptions: {
     autoPaginate: false,
-    maxResults: 1000,
-    pageSize: 1000,
+    maxResults: 100,
+    pageSize: 100,
     isBundling: false,
-    timeout: 30000, // 30 seconds
+    timeout: 60000, // 60 seconds
     retry: {
       retryCodes: [4, 8, 13, 14], // Resource exhausted, deadline exceeded, etc.
       backoffSettings: {
         initialRetryDelayMillis: 100,
         retryDelayMultiplier: 1.3,
-        maxRetryDelayMillis: 30000,
-        initialRpcTimeoutMillis: 30000,
+        maxRetryDelayMillis: 60000,
+        initialRpcTimeoutMillis: 60000,
         rpcTimeoutMultiplier: 1,
-        maxRpcTimeoutMillis: 30000,
-        totalTimeoutMillis: 30000
+        maxRpcTimeoutMillis: 60000,
+        totalTimeoutMillis: 60000
       }
     }
-  } as CallOptions,
+  },
   // Add explicit call settings to override defaults
   callSettings: {
     autoPaginate: false,
-    pageSize: 1000,
-    maxResults: 1000,
-    timeout: 30000,
+    pageSize: 100,
+    maxResults: 100,
+    timeout: 60000,
     retry: {
       retryCodes: [4, 8, 13, 14],
       backoffSettings: {
         initialRetryDelayMillis: 100,
         retryDelayMultiplier: 1.3,
-        maxRetryDelayMillis: 30000,
-        initialRpcTimeoutMillis: 30000,
+        maxRetryDelayMillis: 60000,
+        initialRpcTimeoutMillis: 60000,
         rpcTimeoutMultiplier: 1,
-        maxRpcTimeoutMillis: 30000,
-        totalTimeoutMillis: 30000
+        maxRpcTimeoutMillis: 60000,
+        totalTimeoutMillis: 60000
       }
     }
   },
@@ -74,7 +74,7 @@ const settings: Settings = {
     autoPaginate: false,
     pageSize: 100,
     maxResults: 100,
-    timeout: 30000
+    timeout: 60000
   }
 };
 

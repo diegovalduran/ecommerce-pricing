@@ -221,7 +221,12 @@ function getCategoryVariations(query: string): string[] {
   return Array.from(variations);
 }
 
-// Add timeout utility
+// Constants for pagination and retries
+const PRODUCT_BATCH_SIZE = 100;
+const MAX_RETRIES = 3;
+const BATCH_SIZE = 3;
+
+// Helper function to handle timeouts
 const withTimeout = async (promise: Promise<any>, timeoutMs: number) => {
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(() => reject(new Error('Operation timed out')), timeoutMs);
@@ -278,6 +283,7 @@ async function getRelevantCollections(query: string): Promise<string[]> {
       }
     }
     
+    // If no relevant collections found or no query, return top 10 collections
     const limitedCollections = filteredCollections
       .sort()
       .slice(0, 10);
@@ -290,6 +296,72 @@ async function getRelevantCollections(query: string): Promise<string[]> {
   }
 }
 
+async function fetchProductsFromCollection(
+  collectionName: string,
+  searchQuery: string,
+  analyzedDescription?: any
+): Promise<{ products: Product[]; stats: any }> {
+  let retryCount = 0;
+  let allProducts: Product[] = [];
+  let lastDoc: QueryDocumentSnapshot<DocumentData> | null = null;
+  let hasMore = true;
+  let collectionStats = { totalProducts: 0, processedProducts: 0 };
+
+  while (hasMore && retryCount < MAX_RETRIES) {
+    try {
+      console.log(`Fetching batch from collection: ${collectionName}`);
+      const collectionRef = collection(db, collectionName) as ClientCollectionRef<DocumentData>;
+      const constraints: QueryConstraint[] = [limit(PRODUCT_BATCH_SIZE)];
+      
+      if (lastDoc) {
+        constraints.unshift(startAfter(lastDoc));
+      }
+      
+      const q = query(collectionRef, ...constraints);
+      
+      // Add timeout to getDocs
+      const querySnapshot = await withTimeout(getDocs(q), 60000);
+      
+      const products: Product[] = querySnapshot.docs.map((doc: QueryDocumentSnapshot<DocumentData>) => {
+        const data = doc.data() as DocumentData;
+        return {
+          id: doc.id,
+          collection: collectionName,
+          ...data
+        };
+      });
+      
+      allProducts = allProducts.concat(products);
+      lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
+      hasMore = querySnapshot.docs.length === PRODUCT_BATCH_SIZE;
+      
+      // Update stats
+      collectionStats.totalProducts += products.length;
+      collectionStats.processedProducts += products.length;
+      
+      // Add a small delay between batches to prevent rate limiting
+      if (hasMore) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      
+      retryCount = 0; // Reset retry count on successful fetch
+    } catch (error) {
+      console.error(`Error fetching batch from ${collectionName}:`, error);
+      retryCount++;
+      
+      if (retryCount >= MAX_RETRIES) {
+        console.error(`Max retries reached for ${collectionName}`);
+        break;
+      }
+      
+      // Exponential backoff
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+    }
+  }
+
+  return { products: allProducts, stats: collectionStats };
+}
+
 export async function performSearch(params: {
   query?: string;
   analyzedDescription?: any;
@@ -297,265 +369,110 @@ export async function performSearch(params: {
   request?: NextRequest;
 }): Promise<SearchResults> {
   const { query = "Image Search", analyzedDescription } = params;
-  let { imageSearch } = params;
-  
-  console.log('Search service called with:', { query, imageSearch });
-  
-  // Validate image analysis data if provided
-  if (imageSearch && analyzedDescription) {
-    const hasValidAnalysis = analyzedDescription && 
-      analyzedDescription.type && 
-      analyzedDescription.genre && 
-      analyzedDescription.pattern && 
-      analyzedDescription.length;
-    
-    if (!hasValidAnalysis) {
-      console.log('Invalid or incomplete image analysis data - falling back to text search');
-      imageSearch = false;
-    }
-  }
-
-  if (!imageSearch && !query) {
-    throw new Error('Search query is required for text search');
-  }
-
-  // Get relevant collections with timeout
-  console.log('Fetching relevant collections...');
-  const collections = await withTimeout(getRelevantCollections(query), 60000); // 60 second timeout
-  console.log(`Found ${collections.length} collections to search`);
-
-  let similarProducts = [];
-  let allProducts = [];
+  const startTime = Date.now();
   let collectionStats: Record<string, number | string> = {};
+  let allProducts: Product[] = [];
+  let searchType = "text";
+  let isImageSearch = false;
   let isHybridSearch = false;
-  
-  // Process collections in smaller batches
-  const BATCH_SIZE = 2; // Reduced from 3 to 2
-  const PRODUCT_BATCH_SIZE = 50; // Reduced from 100 to 50
-  const MAX_RETRIES = 3;
 
-  for (let i = 0; i < collections.length; i += BATCH_SIZE) {
-    const batch = collections.slice(i, i + BATCH_SIZE);
-    const batchPromises = batch.map(async (collectionName: string) => {
-      let retryCount = 0;
-      
-      while (retryCount < MAX_RETRIES) {
+  try {
+    // Get relevant collections
+    const collections = await getRelevantCollections(query);
+    console.log(`Processing ${collections.length} collections for search`);
+
+    // Process collections in batches
+    for (let i = 0; i < collections.length; i += BATCH_SIZE) {
+      const batch = collections.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(async (collectionName: string) => {
         try {
-          console.log(`Fetching from collection: ${collectionName}`);
-          let allProducts: Product[] = [];
-          let lastDoc: QueryDocumentSnapshot<DocumentData> | null = null;
-          let hasMore = true;
-
-          while (hasMore) {
-            const collectionRef = collection(db, collectionName) as ClientCollectionRef<DocumentData>;
-            const constraints: QueryConstraint[] = [limit(PRODUCT_BATCH_SIZE)];
-            
-            if (lastDoc) {
-              constraints.unshift(startAfter(lastDoc));
-            }
-            
-            const q = (query as any)(collectionRef, ...constraints) as Query<DocumentData>;
-            
-            // Add timeout to getDocs
-            const querySnapshot = await withTimeout(getDocs(q), 60000); // 60 second timeout
-            
-            const products: Product[] = querySnapshot.docs.map((doc: QueryDocumentSnapshot<DocumentData>) => {
-              const data = doc.data() as DocumentData;
-              return {
-                id: doc.id,
-                collection: collectionName,
-                ...data
-              };
-            });
-            
-            allProducts = allProducts.concat(products);
-            lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] as QueryDocumentSnapshot<DocumentData>;
-            hasMore = querySnapshot.docs.length === PRODUCT_BATCH_SIZE;
-          }
+          const { products, stats } = await fetchProductsFromCollection(
+            collectionName,
+            query,
+            analyzedDescription
+          );
           
-          collectionStats[collectionName] = allProducts.length;
-          return allProducts;
+          collectionStats[collectionName] = stats.totalProducts;
+          return products;
         } catch (error) {
-          console.error(`Error fetching from ${collectionName} (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
-          retryCount++;
-          
-          if (retryCount >= MAX_RETRIES) {
-            collectionStats[collectionName] = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
-            return [];
-          }
-          
-          // Wait before retrying (exponential backoff)
-          await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000)));
+          console.error(`Error processing collection ${collectionName}:`, error);
+          collectionStats[collectionName] = 'error';
+          return [];
         }
-      }
-      
-      return [];
-    });
+      });
 
-    try {
-      // Add timeout for each batch
-      const batchResults = await withTimeout(Promise.all(batchPromises), 60000); // 60 second timeout per batch
-      allProducts.push(...batchResults.flat());
-      console.log(`Processed batch ${i/BATCH_SIZE + 1} of ${Math.ceil(collections.length/BATCH_SIZE)}`);
-    } catch (error) {
-      console.error(`Error processing batch ${i/BATCH_SIZE + 1}:`, error);
-      // Continue with next batch even if this one failed
-      continue;
-    }
-    
-    // Add delay between batches
-    if (i + BATCH_SIZE < collections.length) {
-      await new Promise(resolve => setTimeout(resolve, 500)); // Keep 500ms delay between batches
-    }
-  }
-  
-  console.log('Collection stats:', collectionStats);
-  console.log(`Total products found: ${allProducts.length}`);
-  
-  // Determine search strategy
-  if (analyzedDescription && query && query !== "Image Search" && imageSearch && !analyzedDescription.skipped) {
-    // Hybrid search
-    isHybridSearch = true;
-    console.log('Using hybrid text+image search');
-    
-    try {
-      // Get text search results
-      console.log(`Running text similarity search for query: "${query}" on ${allProducts.length} products`);
-      const textResults = findSimilarProducts(query, allProducts, 0.1);
-      console.log(`Text search found ${textResults.length} results`);
-      
-      // Get image search results
-      const inputProduct = {
-        name: query,
-        "analyzed description": analyzedDescription,
-        color: analyzedDescription.color
-      };
-      
-      console.log('Input product for image search:', JSON.stringify(inputProduct, null, 2));
-      
-      const imageResults = await findSimilarProductsByImage(
-        inputProduct,
-        collections,
-        db,
-        0.1
-      );
-      console.log(`Image search found ${imageResults.length} results`);
-      
-      // Combine results
-      const combinedResults = [...textResults];
-      
-      for (const imgResult of imageResults) {
-        const existingIndex = combinedResults.findIndex(r => r.id === imgResult.id);
-        
-        if (existingIndex >= 0) {
-          const textScore = combinedResults[existingIndex].score;
-          const imageScore = imgResult.score;
-          
-          const inputType = analyzedDescription.type.toLowerCase();
-          const productType = imgResult.matchDetails?.type?.toLowerCase() || '';
-          
-          let combinedScore;
-          if (inputType.includes('shorts') && productType.includes('shorts')) {
-            console.log(`Type match found for shorts: ${imgResult.name}`);
-            combinedScore = (textScore * 0.3) + (imageScore * 0.7);
-          } else {
-            combinedScore = (textScore * 0.4) + (imageScore * 0.6);
-          }
-          
-          combinedResults[existingIndex].score = combinedScore;
-          combinedResults[existingIndex].debug = {
-            textScore,
-            imageScore,
-            combinedScore,
-            combined: true
-          };
-          
-          if (imgResult.matchDetails) {
-            combinedResults[existingIndex].matchDetails = {
-              ...combinedResults[existingIndex].matchDetails,
-              imageMatch: imgResult.matchDetails
-            };
-          }
-        } else {
-          combinedResults.push(imgResult);
-        }
+      const batchResults = await Promise.all(batchPromises);
+      allProducts = allProducts.concat(...batchResults);
+
+      // Add a small delay between batches
+      if (i + BATCH_SIZE < collections.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
-      
-      combinedResults.sort((a, b) => b.score - a.score);
-      similarProducts = combinedResults;
-      
-    } catch (error) {
-      console.error('Error in hybrid search:', error);
-      // Fall back to text-only search on error
-      console.log('Falling back to text-only search due to error');
-      similarProducts = findSimilarProducts(query, allProducts);
-      console.log(`Text search found ${similarProducts.length} products`);
     }
-  } else if (analyzedDescription && imageSearch && (imageSearch || !query || query === "Image Search") && !analyzedDescription.skipped) {
-    // Image-only search
-    console.log('Using image-based similarity search only');
-    
-    try {
-      const inputProduct = {
-        name: query || "Image Search",
-        "analyzed description": analyzedDescription
-      };
-      
-      console.log('Input product for image search:', JSON.stringify(inputProduct, null, 2));
-      
-      similarProducts = await findSimilarProductsByImage(
-        inputProduct,
-        collections,
-        db,
-        0.1
-      );
-      
-      console.log(`Image similarity search found ${similarProducts.length} products`);
-      
-    } catch (error) {
-      console.error('Error in image similarity search:', error);
-      // Fall back to text search if available, otherwise throw
+
+    // Perform search based on type
+    let results: any[] = [];
+    if (analyzedDescription && !analyzedDescription.skipped) {
       if (query && query !== "Image Search") {
-        console.log('Falling back to text search due to error');
-        similarProducts = findSimilarProducts(query, allProducts);
-        console.log(`Text search found ${similarProducts.length} products`);
+        // Hybrid search
+        isHybridSearch = true;
+        searchType = "hybrid";
+        const imageResults = await findSimilarProductsByImage(
+          { name: query, "analyzed description": analyzedDescription },
+          collections,
+          adminDb
+        );
+        const textResults = findSimilarProducts(query, allProducts);
+        results = [...imageResults, ...textResults];
       } else {
-        throw error;
+        // Image-only search
+        isImageSearch = true;
+        searchType = "image";
+        results = await findSimilarProductsByImage(
+          { name: query, "analyzed description": analyzedDescription },
+          collections,
+          adminDb
+        );
       }
+    } else {
+      // Text-only search
+      searchType = "text";
+      results = findSimilarProducts(query, allProducts);
     }
-  } else {
-    // Text-only search
-    console.log('Using traditional text-based similarity search only');
-    console.log(`Running text similarity search for query: "${query}" on ${allProducts.length} products`);
-    similarProducts = findSimilarProducts(query, allProducts);
-    console.log(`Found ${similarProducts.length} products with similarity matches`);
+
+    // Sort and deduplicate results
+    const uniqueResults = Array.from(
+      new Map(results.map(item => [item.id, item])).values()
+    ).sort((a, b) => b.score - a.score);
+
+    const endTime = Date.now();
+    console.log(`Search completed in ${endTime - startTime}ms`);
+    console.log(`Found ${uniqueResults.length} results from ${Object.keys(collectionStats).length} collections`);
+
+    return {
+      success: true,
+      query,
+      isImageSearch,
+      isHybridSearch,
+      searchType,
+      results: uniqueResults,
+      totalResults: uniqueResults.length,
+      totalProducts: allProducts.length,
+      collectionStats
+    };
+  } catch (error) {
+    console.error('Search error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Search failed',
+      query,
+      isImageSearch,
+      isHybridSearch,
+      searchType,
+      results: [],
+      totalResults: 0,
+      totalProducts: 0,
+      collectionStats
+    };
   }
-
-  // Get top 10 results
-  const topResults = similarProducts
-    .slice(0, 10)
-    .map(product => ({
-      id: product.id,
-      name: product.name || 'Unknown Product',
-      collection: product.collection || 'Unknown Collection',
-      score: product.score,
-      matchDetails: product.matchDetails || ('debug' in product ? (product as any).debug : undefined),
-      price: product.price,
-      store: product.store,
-      url: product.url,
-      "analyzed description": product["analyzed description"],
-      debug: 'debug' in product ? (product as any).debug : undefined
-    }));
-
-  return {
-    success: true,
-    query,
-    isImageSearch: !!imageSearch,
-    isHybridSearch,
-    searchType: isHybridSearch ? 'hybrid' : (analyzedDescription && (imageSearch || !query || query === "Image Search")) ? 'image-only' : 'text-only',
-    results: topResults,
-    totalResults: similarProducts.length,
-    totalProducts: allProducts.length,
-    collectionStats
-  };
 } 

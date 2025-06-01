@@ -297,13 +297,30 @@ export async function findSimilarProductsByImage(
     try {
       console.log(`Fetching products from collection: ${collectionName}`);
       
-      // Get collection reference and fetch documents using Firebase Admin SDK
+      // Get collection reference and fetch documents using Firebase Admin SDK with pagination
       const collectionRef = db.collection(collectionName);
-      const snapshot = await collectionRef.get();
-      const products = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      let lastDoc = null;
+      let hasMore = true;
+      let products: any[] = [];
+
+      // Fetch documents in batches of 100
+      while (hasMore) {
+        let query = collectionRef.limit(100);
+        if (lastDoc) {
+          query = query.startAfter(lastDoc);
+        }
+
+        const snapshot = await query.get();
+        const batch = snapshot.docs.map(doc => ({
+          id: doc.id,
+          collection: collectionName,
+          ...doc.data()
+        }));
+
+        products = [...products, ...batch];
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        hasMore = snapshot.docs.length === 100;
+      }
       
       console.log(`Found ${products.length} products in ${collectionName}`);
       
