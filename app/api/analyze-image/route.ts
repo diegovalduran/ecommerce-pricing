@@ -39,11 +39,13 @@ function normalizeCategory(productName: string): string {
 export async function POST(request: Request) {
     try {
         if (!API_KEY) {
+            console.log("🔍 [GEMINI] No Google API key found - skipping image analysis");
             return NextResponse.json({ 
-                success: false, 
-                error: "Google API key is not configured",
-                code: "MISSING_API_KEY"
-            }, { status: 503 });
+                success: true, 
+                skipped: true,
+                message: "Image analysis skipped - API key not configured",
+                code: "SKIPPED_ANALYSIS"
+            });
         }
 
         const { imageUrl, productName } = await request.json();
@@ -133,7 +135,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ 
             success: false, 
             error: "Failed to analyze image",
-            code: error instanceof Error && error.message === "Google API key is not configured" ? "MISSING_API_KEY" : "ANALYSIS_ERROR",
+            code: error instanceof Error && error.message === "Google API key is not configured" ? "SKIPPED_ANALYSIS" : "ANALYSIS_ERROR",
             details: error instanceof Error ? error.message : "Unknown error"
         }, { status: 500 });
     }

@@ -413,7 +413,7 @@ export async function performSearch(params: {
   console.log(`Total products found: ${allProducts.length}`);
   
   // Determine search strategy
-  if (analyzedDescription && query && query !== "Image Search" && imageSearch) {
+  if (analyzedDescription && query && query !== "Image Search" && imageSearch && !analyzedDescription.skipped) {
     // Hybrid search
     isHybridSearch = true;
     console.log('Using hybrid text+image search');
@@ -491,7 +491,7 @@ export async function performSearch(params: {
       similarProducts = findSimilarProducts(query, allProducts);
       console.log(`Text search found ${similarProducts.length} products`);
     }
-  } else if (analyzedDescription && imageSearch && (imageSearch || !query || query === "Image Search")) {
+  } else if (analyzedDescription && imageSearch && (imageSearch || !query || query === "Image Search") && !analyzedDescription.skipped) {
     // Image-only search
     console.log('Using image-based similarity search only');
     

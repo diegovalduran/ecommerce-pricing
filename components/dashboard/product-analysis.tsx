@@ -99,12 +99,15 @@ export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: 
           const analysisData = await analysisResponse.json();
           
           if (!analysisResponse.ok) {
-            if (analysisData.code === "MISSING_API_KEY") {
-              console.log("🔍 [GEMINI] Google API key not configured - falling back to text-only search");
+            if (analysisData.code === "SKIPPED_ANALYSIS") {
+              console.log("🔍 [GEMINI] Image analysis skipped - continuing with text-only search");
               // Continue without image analysis
             } else {
               throw new Error(analysisData.details || "Failed to analyze image");
             }
+          } else if (analysisData.skipped) {
+            console.log("🔍 [GEMINI] Image analysis skipped - continuing with text-only search");
+            // Continue without image analysis
           } else if (analysisData["analyzed description"]) {
             imageAnalysis = analysisData["analyzed description"];
             console.log("🔍 [GEMINI] Final description:", imageAnalysis);
@@ -116,8 +119,8 @@ export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: 
             console.log("Document updated with image analysis");
           }
           
-          // Only run image similarity search if we have analysis data
-          if (imageAnalysis) {
+          // Only run image similarity search if we have analysis data and it wasn't skipped
+          if (imageAnalysis && !analysisData.skipped) {
             try {
               console.log("🔍 [SIMILARITY] Running image-based product similarity search...");
               const imageSimilarityResponse = await fetch("/api/image-search", {
