@@ -1,97 +1,99 @@
 import { NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase/admin-config'
 
-const PAGE_SIZE = 20; // Default page size for paginated requests
+// Cache for collection counts and last updated times
+const collectionCache = new Map<string, { totalProducts: number; lastUpdated: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const usePagination = searchParams.get('paginate') !== 'false'; // Default to true
-    const page = Math.max(1, Number(searchParams.get('page')) || 1);
-    const pageSize = Math.min(Number(searchParams.get('pageSize')) || PAGE_SIZE, 50); // Cap at 50
-
     // Get all collections
-    const allCollections = await adminDb.listCollections();
-    
-    // Filter out system collections
-    const filteredCollections = allCollections
-      .map(col => col.id)
-      .filter(name => !["products", "Dashboard Inputs", "recent-scrapes"].includes(name));
+    const collections = await adminDb.listCollections()
+    const collectionNames = collections.map(col => col.id)
+      .filter(name => name !== "products" && name !== "Dashboard Inputs" && name !== "recent-scrapes")
 
-    // Get the collections to process based on pagination setting
-    const collectionNames = usePagination 
-      ? filteredCollections.slice((page - 1) * pageSize, page * pageSize)
-      : filteredCollections;
-
-    // Get counts for collections in parallel with a smaller batch size
-    const BATCH_SIZE = usePagination ? 5 : 10; // Larger batch size for non-paginated requests
-    const collectionDetails = [];
-    
-    for (let i = 0; i < collectionNames.length; i += BATCH_SIZE) {
-      const batch = collectionNames.slice(i, i + BATCH_SIZE);
-      const batchPromises = batch.map(async (name) => {
+    // Get counts for all collections in parallel
+    const collectionDetails = await Promise.all(
+      collectionNames.map(async (name) => {
         try {
-          // Use a more efficient count query
-          const snapshot = await adminDb.collection(name)
-            .limit(1000) // Limit the count to prevent timeouts
-            .count()
-            .get();
+          // Check cache first
+          const cached = collectionCache.get(name);
+          const now = Date.now();
+          if (cached && (now - cached.lastUpdated) < CACHE_TTL) {
+            console.log(`Using cached data for ${name}`);
+            return {
+              name,
+              ...cached
+            };
+          }
 
-          const totalProducts = snapshot.data().count;
+          // If not in cache or expired, fetch new data
+          console.log(`Fetching fresh data for ${name}`);
+          
+          // Get the count first (single operation)
+          const snapshot = await adminDb.collection(name).count().get()
+          const totalProducts = snapshot.data().count
 
-          // Get the most recent document with a limit
+          // Get the most recent document
           const lastDoc = await adminDb.collection(name)
             .orderBy('scrapedAt', 'desc')
             .limit(1)
-            .get();
+            .get()
 
-          const lastUpdated = lastDoc.empty ? Date.now() : 
-            new Date(lastDoc.docs[0].data().scrapedAt).getTime();
+          const lastUpdated = lastDoc.empty ? now : 
+            new Date(lastDoc.docs[0].data().scrapedAt).getTime()
+
+          // Update cache
+          collectionCache.set(name, {
+            totalProducts,
+            lastUpdated
+          });
 
           return {
             name,
             totalProducts,
             lastUpdated
-          };
+          }
         } catch (error) {
-          console.error(`Error fetching details for ${name}:`, error);
+          console.error(`Error fetching details for ${name}:`, error)
+          // If we hit quota, return cached data even if expired
+          const cached = collectionCache.get(name);
+          if (cached) {
+            console.log(`Using expired cache for ${name} due to error`);
+            return {
+              name,
+              ...cached
+            };
+          }
           return {
             name,
             totalProducts: 0,
             lastUpdated: Date.now()
-          };
+          }
         }
-      });
+      })
+    )
 
-      const batchResults = await Promise.all(batchPromises);
-      collectionDetails.push(...batchResults);
-    }
-
-    // Set cache headers with a shorter duration
+    // Set cache headers
     const response = NextResponse.json({
       collections: collectionNames,
       details: collectionDetails,
-      ...(usePagination && {
-        pagination: {
-          currentPage: page,
-          pageSize,
-          totalCollections: filteredCollections.length,
-          totalPages: Math.ceil(filteredCollections.length / pageSize),
-          hasMore: page * pageSize < filteredCollections.length
-        }
-      })
-    });
+      cacheInfo: {
+        cachedCollections: collectionCache.size,
+        cacheTTL: CACHE_TTL
+      }
+    })
 
-    // Cache for 1 minute
-    response.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120');
+    // Cache for 5 minutes
+    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
 
-    return response;
+    return response
   } catch (error) {
-    console.error('Error fetching collections:', error);
+    console.error('Error fetching collections:', error)
     return NextResponse.json(
       { error: 'Failed to fetch collections', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
-    );
+    )
   }
 }
 
