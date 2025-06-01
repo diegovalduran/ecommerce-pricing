@@ -13,8 +13,12 @@ export function getApiBaseUrl(): string {
     return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
   }
   
-  // In server-side context, use environment variable or default
-  // We default to 3000 but this can be overridden by environment variables
+  // In server-side context (production)
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  
+  // In server-side context (development)
   const port = process.env.PORT || process.env.NEXT_PUBLIC_PORT || '3001';
   return `http://127.0.0.1:${port}`;
 }
