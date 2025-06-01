@@ -1,5 +1,5 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore, Settings } from 'firebase-admin/firestore';
+import { getFirestore } from 'firebase-admin/firestore';
 
 // Initialize Firebase Admin
 const apps = getApps();
@@ -26,25 +26,4 @@ if (!apps.length) {
   }
 }
 
-// Configure Firestore settings
-const settings: Settings = {
-  ignoreUndefinedProperties: true,
-  timeoutSeconds: 15,
-  maxRetries: 2,
-  autoPaginate: false,
-  // Explicitly set these to override internal SDK settings
-  maxResults: 1000,  // Limit results per query
-  isBundling: false, // Disable bundling to prevent internal settings override
-  // Force these settings to take precedence
-  experimentalForceLongPolling: true,
-  experimentalAutoDetectLongPolling: false
-};
-
-// Export the Firestore admin instance with custom settings
 export const adminDb = getFirestore(getApps()[0]);
-
-// Apply settings
-adminDb.settings(settings);
-
-// Log the settings we attempted to apply
-console.log('Firestore settings applied:', settings);
