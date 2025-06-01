@@ -26,6 +26,25 @@ export interface SearchResults {
   collectionStats: Record<string, number | string>;
 }
 
+async function getCollections(): Promise<string[]> {
+  try {
+    const response = await fetch('/api/collections');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch collections: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.collections.filter((name: string) => 
+      name !== "products" && 
+      name !== "Dashboard Inputs" && 
+      name !== "recent-scrapes" &&
+      name !== "batchJobs"
+    );
+  } catch (error) {
+    console.error('Error fetching collections:', error);
+    throw error;
+  }
+}
+
 export async function performSearch(params: {
   query?: string;
   analyzedDescription?: any;
@@ -45,8 +64,7 @@ export async function performSearch(params: {
 
   // Get all collections
   console.log('Fetching available collections...');
-  const collectionsSnapshot = await getDocs(collection(db, 'collections'));
-  const collections = collectionsSnapshot.docs.map(doc => doc.id);
+  const collections = await getCollections();
   console.log(`Found ${collections.length} collections:`, collections);
 
   let similarProducts = [];
