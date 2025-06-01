@@ -26,19 +26,13 @@ if (!apps.length) {
   }
 }
 
-// Configure Firestore settings with more conservative values
+// Configure Firestore settings
 const settings: Settings = {
   ignoreUndefinedProperties: true,
-  // Set more conservative timeout and retry settings
-  timeoutSeconds: 15, // Reduced from 30 to 15 seconds
-  maxRetries: 2,      // Reduced from 3 to 2 retries
-  // Explicitly disable auto-pagination and set pageSize to undefined
-  autoPaginate: false,
-  pageSize: undefined, // Explicitly set to undefined to prevent the warning
-  // Add additional settings to prevent large result sets
-  maxResults: 1000,   // Maximum number of results per query
-  // Disable bundling to prevent large batch operations
-  isBundling: false
+  timeoutSeconds: 15,
+  maxRetries: 2,
+  // Only set autoPaginate to false, remove all other pagination-related settings
+  autoPaginate: false
 };
 
 // Export the Firestore admin instance with custom settings
@@ -46,11 +40,4 @@ export const adminDb = getFirestore(getApps()[0]);
 adminDb.settings(settings);
 
 // Log the settings for debugging
-console.log('Firestore settings applied:', {
-  timeoutSeconds: settings.timeoutSeconds,
-  maxRetries: settings.maxRetries,
-  autoPaginate: settings.autoPaginate,
-  pageSize: settings.pageSize,
-  maxResults: settings.maxResults,
-  isBundling: settings.isBundling
-});
+console.log('Firestore settings applied:', settings);
