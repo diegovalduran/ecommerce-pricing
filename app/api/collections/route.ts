@@ -1,33 +1,31 @@
 import { NextResponse } from 'next/server'
-import { adminDb } from '@/lib/firebase/admin-config'
+import { adminDb, listCollectionsAsync, getAllDocumentsAsync } from '@/lib/firebase/admin-config'
 
 // Helper function to get collection details with pagination and timeout
 async function getCollectionDetails(name: string) {
   try {
-    // Set a timeout for the entire operation
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Operation timed out')), 60000); // 60 second timeout
-    });
+    const collectionRef = adminDb.collection(name);
+    let totalProducts = 0;
+    let lastUpdated = Date.now();
 
-    // Get count with pagination
-    const countPromise = adminDb.collection(name)
-      .limit(1000)
-      .count()
-      .get();
+    // Use async iterator to get documents
+    const iterator = getAllDocumentsAsync(collectionRef);
+    let count = 0;
+    let lastDoc = null;
 
-    // Race between the operation and timeout
-    const snapshot = await Promise.race([countPromise, timeoutPromise]) as any;
-    const totalProducts = snapshot.data().count;
+    for await (const doc of iterator) {
+      count++;
+      const data = doc.data();
+      if (data.scrapedAt) {
+        const timestamp = new Date(data.scrapedAt).getTime();
+        if (timestamp > lastUpdated) {
+          lastUpdated = timestamp;
+        }
+      }
+      lastDoc = doc;
+    }
 
-    // Get the most recent document with pagination
-    const lastDocPromise = adminDb.collection(name)
-      .orderBy('scrapedAt', 'desc')
-      .limit(1)
-      .get();
-
-    const lastDoc = await Promise.race([lastDocPromise, timeoutPromise]) as any;
-    const lastUpdated = lastDoc.empty ? Date.now() : 
-      new Date(lastDoc.docs[0].data().scrapedAt).getTime();
+    totalProducts = count;
 
     return {
       name,
@@ -53,56 +51,70 @@ export async function GET(request: Request) {
     const pageSize = parseInt(url.searchParams.get('pageSize') || '10');
     const skip = (page - 1) * pageSize;
 
-    // Get all collections with pagination
-    const collections = await adminDb.listCollections();
-    const collectionNames = collections
-      .map(col => col.id)
-      .filter(name => 
-        name !== "products" && 
-        name !== "Dashboard Inputs" && 
-        name !== "recent-scrapes" &&
-        name !== "batchJobs"
-      );
+    // Get collections using async iterator
+    const collections: string[] = [];
+    const iterator = listCollectionsAsync(pageSize);
+    let currentPage = 1;
+    let currentSkip = 0;
 
-    // Calculate pagination
-    const totalCollections = collectionNames.length;
+    for await (const collection of iterator) {
+      // Skip system collections
+      if (["products", "Dashboard Inputs", "recent-scrapes", "batchJobs"].includes(collection.id)) {
+        continue;
+      }
+
+      // Handle pagination
+      if (currentPage === page) {
+        if (currentSkip < skip) {
+          currentSkip++;
+          continue;
+        }
+        if (collections.length < pageSize) {
+          collections.push(collection.id);
+        }
+      } else if (currentSkip + collections.length >= pageSize) {
+        currentPage++;
+        currentSkip = 0;
+      }
+    }
+
+    // Get total count for pagination
+    const allCollections: string[] = [];
+    const countIterator = listCollectionsAsync();
+    for await (const collection of countIterator) {
+      if (!["products", "Dashboard Inputs", "recent-scrapes", "batchJobs"].includes(collection.id)) {
+        allCollections.push(collection.id);
+      }
+    }
+
+    const totalCollections = allCollections.length;
     const totalPages = Math.ceil(totalCollections / pageSize);
-    const paginatedCollections = collectionNames.slice(skip, skip + pageSize);
 
     // Process collections in smaller batches to prevent timeouts
     const BATCH_SIZE = 3; // Process 3 collections at a time
     const collectionDetails = [];
     
-    for (let i = 0; i < paginatedCollections.length; i += BATCH_SIZE) {
-      const batch = paginatedCollections.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < collections.length; i += BATCH_SIZE) {
+      const batch = collections.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(name => getCollectionDetails(name));
       
-      // Add timeout for each batch
-      const batchPromise = Promise.all(
-        batch.map(name => getCollectionDetails(name))
-      );
-      
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Batch operation timed out')), 60000);
-      });
-
       try {
-        const batchResults = await Promise.race([batchPromise, timeoutPromise]) as any[];
+        const batchResults = await Promise.all(batchPromises);
         collectionDetails.push(...batchResults);
       } catch (error) {
         console.error(`Error processing batch ${i/BATCH_SIZE + 1}:`, error);
-        // Continue with next batch even if this one failed
         continue;
       }
       
       // Add a small delay between batches to prevent rate limiting
-      if (i + BATCH_SIZE < paginatedCollections.length) {
+      if (i + BATCH_SIZE < collections.length) {
         await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
 
     // Set cache headers with longer duration
     const response = NextResponse.json({
-      collections: paginatedCollections,
+      collections,
       details: collectionDetails,
       pagination: {
         currentPage: page,
@@ -142,12 +154,15 @@ export async function DELETE(request: Request) {
       });
     }
 
-    // Get all documents in the collection
+    // Get all documents in the collection using async iterator
     const collectionRef = adminDb.collection(collectionName);
-    const snapshot = await collectionRef.get();
+    const iterator = getAllDocumentsAsync(collectionRef);
+    const deletePromises = [];
+
+    for await (const doc of iterator) {
+      deletePromises.push(doc.ref.delete());
+    }
     
-    // Delete all documents in the collection
-    const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
     await Promise.all(deletePromises);
     
     return Response.json({ 

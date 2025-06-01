@@ -1,5 +1,7 @@
 // Import Firebase Admin functions
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { adminDb, getAllDocumentsAsync } from '@/lib/firebase/admin-config';
+import { CollectionReference } from 'firebase-admin/firestore';
 
 interface ScoredProduct {
     id: string;
@@ -290,71 +292,42 @@ export async function findSimilarProductsByImage(
   console.log(`Filtered to ${relevantCollections.length} relevant collections based on type "${productType}"`);
   console.log(`Relevant collections: ${relevantCollections.join(", ")}`);
 
-  // Fetch and evaluate products from relevant collections
+  // Process collections in parallel with a concurrency limit
+  const BATCH_SIZE = 3;
   let allScoredProducts: ScoredProduct[] = [];
   
-  for (const collectionName of relevantCollections) {
-    try {
-      console.log(`Fetching products from collection: ${collectionName}`);
-      
-      // Get collection reference and fetch documents using Firebase Admin SDK with pagination
-      const collectionRef = db.collection(collectionName);
-      let lastDoc = null;
-      let hasMore = true;
-      let products: any[] = [];
+  for (let i = 0; i < relevantCollections.length; i += BATCH_SIZE) {
+    const batch = relevantCollections.slice(i, i + BATCH_SIZE);
+    const batchPromises = batch.map(async (collectionName: string) => {
+      try {
+        console.log(`Processing collection: ${collectionName}`);
+        const collectionRef = db.collection(collectionName);
+        const products: any[] = [];
 
-      // Fetch documents in batches of 100
-      while (hasMore) {
-        let query = collectionRef.limit(100);
-        if (lastDoc) {
-          query = query.startAfter(lastDoc);
-        }
-
-        const snapshot = await query.get();
-        const batch = snapshot.docs.map(doc => ({
-          id: doc.id,
-          collection: collectionName,
-          ...doc.data()
-        }));
-
-        products = [...products, ...batch];
-        lastDoc = snapshot.docs[snapshot.docs.length - 1];
-        hasMore = snapshot.docs.length === 100;
-      }
-      
-      console.log(`Found ${products.length} products in ${collectionName}`);
-      
-      // Score each product based on image analysis similarity
-      const scoredProducts = products
-        .filter((product: any) => {
-          const hasAnalysis = product["analyzed description"] && 
-            product["analyzed description"].type && 
-            product["analyzed description"].genre && 
-            product["analyzed description"].pattern && 
-            product["analyzed description"].length;
-          
-          if (!hasAnalysis) {
-            console.log(`Skipping product ${product.id} in ${collectionName} - missing analyzed description`);
+        // Use async iterator to get documents
+        const iterator = getAllDocumentsAsync(collectionRef);
+        for await (const doc of iterator) {
+          const data = doc.data();
+          if (!data["analyzed description"] || data["analyzed description"].skipped) {
+            continue;
           }
-          return hasAnalysis;
-        })
-        .map((product: any) => {
+
           // Calculate base similarity from analyzed description
           const similarity = calculateImageSimilarity(
             inputDesc,
-            product["analyzed description"]
+            data["analyzed description"]
           );
           
           // Calculate color similarity if colors are available
           let colorScore = 0;
-          if (inputProduct.color && product.colors && product.colors.length > 0) {
+          if (inputProduct.color && data.colors && data.colors.length > 0) {
             const inputColors = Array.isArray(inputProduct.color) 
               ? inputProduct.color 
               : [inputProduct.color];
             
             // Compare each input color against each product color
             const colorScores = inputColors.map(inputColor => 
-              Math.max(...product.colors.map((productColor: string) => 
+              Math.max(...data.colors.map((productColor: string) => 
                 calculateTextSimilarity(inputColor.toLowerCase(), productColor.toLowerCase())
               ))
             );
@@ -370,29 +343,42 @@ export async function findSimilarProductsByImage(
             
           // Only log the highest scoring matches (top 10% of threshold)
           if (finalScore > threshold * 2) {
-            console.log(`High match found (${finalScore.toFixed(2)}): ${product.name || 'Unnamed'} (${collectionName})`);
-            console.log(`  Document ID: ${product.id}`);
+            console.log(`High match found (${finalScore.toFixed(2)}): ${data.name || 'Unnamed'} (${collectionName})`);
+            console.log(`  Document ID: ${doc.id}`);
             console.log(`  Analysis score: ${similarity.toFixed(2)}, Color score: ${colorScore.toFixed(2)}`);
           }
           
-          return {
-            ...product,
-            score: finalScore,
-            matchDetails: { 
-              analysisScore: similarity,
-              colorScore: colorScore,
-              type: product["analyzed description"].type,
-              genre: product["analyzed description"].genre,
-              pattern: product["analyzed description"].pattern,
-              length: product["analyzed description"].length
-            }
-          };
-        })
-        .filter((product: any) => product.score > threshold);
-      
-      allScoredProducts = [...allScoredProducts, ...scoredProducts];
-    } catch (error) {
-      console.error(`Error processing collection ${collectionName}:`, error);
+          if (finalScore > threshold) {
+            products.push({
+              id: doc.id,
+              collection: collectionName,
+              ...data,
+              score: finalScore,
+              matchDetails: { 
+                analysisScore: similarity,
+                colorScore: colorScore,
+                type: data["analyzed description"].type,
+                genre: data["analyzed description"].genre,
+                pattern: data["analyzed description"].pattern,
+                length: data["analyzed description"].length
+              }
+            });
+          }
+        }
+
+        return products;
+      } catch (error) {
+        console.error(`Error processing collection ${collectionName}:`, error);
+        return [];
+      }
+    });
+
+    const batchResults = await Promise.all(batchPromises);
+    allScoredProducts = [...allScoredProducts, ...batchResults.flat()];
+
+    // Add a small delay between batches to prevent rate limiting
+    if (i + BATCH_SIZE < relevantCollections.length) {
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
   }
   
