@@ -8,7 +8,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
 export async function GET(request: Request) {
   try {
     // Get all collections
-    const collections = await adminDb.listCollections()
+    const collections = await adminDb.listCollections();
     const collectionNames = collections.map(col => col.id)
       .filter(name => name !== "products" && name !== "Dashboard Inputs" && name !== "recent-scrapes")
 
@@ -30,18 +30,18 @@ export async function GET(request: Request) {
           // If not in cache or expired, fetch new data
           console.log(`Fetching fresh data for ${name}`);
           
-          // Get the count first (single operation)
-          const snapshot = await adminDb.collection(name).count().get()
-          const totalProducts = snapshot.data().count
+          // Get the count
+          const snapshot = await adminDb.collection(name).count().get();
+          const totalProducts = snapshot.data().count;
 
           // Get the most recent document
           const lastDoc = await adminDb.collection(name)
             .orderBy('scrapedAt', 'desc')
             .limit(1)
-            .get()
+            .get();
 
           const lastUpdated = lastDoc.empty ? now : 
-            new Date(lastDoc.docs[0].data().scrapedAt).getTime()
+            new Date(lastDoc.docs[0].data().scrapedAt).getTime();
 
           // Update cache
           collectionCache.set(name, {
@@ -53,47 +53,34 @@ export async function GET(request: Request) {
             name,
             totalProducts,
             lastUpdated
-          }
+          };
         } catch (error) {
-          console.error(`Error fetching details for ${name}:`, error)
-          // If we hit quota, return cached data even if expired
-          const cached = collectionCache.get(name);
-          if (cached) {
-            console.log(`Using expired cache for ${name} due to error`);
-            return {
-              name,
-              ...cached
-            };
-          }
+          console.error(`Error fetching details for ${name}:`, error);
           return {
             name,
             totalProducts: 0,
             lastUpdated: Date.now()
-          }
+          };
         }
       })
-    )
+    );
 
-    // Set cache headers
-    const response = NextResponse.json({
-      collections: collectionNames,
-      details: collectionDetails,
+    // Sort collections by last updated time
+    const sortedCollections = collectionDetails.sort((a, b) => b.lastUpdated - a.lastUpdated);
+
+    return NextResponse.json({
+      collections: sortedCollections,
       cacheInfo: {
-        cachedCollections: collectionCache.size,
-        cacheTTL: CACHE_TTL
+        totalCached: collectionCache.size,
+        ttl: CACHE_TTL
       }
-    })
-
-    // Cache for 5 minutes
-    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
-
-    return response
+    });
   } catch (error) {
-    console.error('Error fetching collections:', error)
+    console.error('Error fetching collections:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch collections', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to fetch collections' },
       { status: 500 }
-    )
+    );
   }
 }
 
