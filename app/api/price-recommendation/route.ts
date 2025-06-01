@@ -84,7 +84,7 @@ export async function POST(req: Request) {
     
     console.log('Search request body:', JSON.stringify(searchRequestBody).substring(0, 200) + (JSON.stringify(searchRequestBody).length > 200 ? '...' : ''));
     
-    const searchResponse = await fetch(getApiUrl('search'), {
+    const searchResponse = await fetch(getApiUrl('search', req), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

@@ -28,7 +28,7 @@ export async function POST(req: Request) {
 
     // Get all collections first
     console.log('Fetching available collections...');
-    const collectionsResponse = await fetch(getApiUrl('collections'));
+    const collectionsResponse = await fetch(getApiUrl('collections', req));
     if (!collectionsResponse.ok) {
       console.error(`Failed to fetch collections: ${collectionsResponse.status}`);
       throw new Error(`Failed to fetch collections: ${collectionsResponse.status}`);
