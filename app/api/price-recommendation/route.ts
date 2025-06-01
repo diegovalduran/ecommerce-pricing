@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { performSearch } from '@/lib/search/search-service';
 
+// Set max duration to 5 minutes (300 seconds)
+export const maxDuration = 300;
+
 interface PriceData {
   original: number;
   discounted: number;
