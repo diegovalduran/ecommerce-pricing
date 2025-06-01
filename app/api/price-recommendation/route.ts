@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getApiUrl } from '@/lib/utils/api-helpers';
+import { performSearch } from '@/lib/search/search-service';
 
 interface PriceData {
   original: number;
@@ -69,58 +69,38 @@ export async function POST(req: Request) {
 
     console.log(`Searching for: "${searchQuery}"`);
 
-    // Use our advanced search API to find similar products
+    // Use our search service directly
     const searchStartTime = performance.now();
-    console.log('Calling search API with query:', searchQuery);
+    console.log('Calling search service with query:', searchQuery);
     const hasImageAnalysis = !!analyzedDescription;
     
-    const searchRequestBody = { 
+    const searchResults = await performSearch({
       query: searchQuery,
       ...(hasImageAnalysis && { 
         analyzedDescription, 
         imageSearch: true 
       })
-    };
-    
-    console.log('Search request body:', JSON.stringify(searchRequestBody).substring(0, 200) + (JSON.stringify(searchRequestBody).length > 200 ? '...' : ''));
-    
-    const searchResponse = await fetch(getApiUrl('search', req), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(searchRequestBody)
     });
     
     stats.timings.search = performance.now() - searchStartTime;
     console.log(`Search completed in ${stats.timings.search.toFixed(2)}ms`);
-    console.log('Search API response status:', searchResponse.status);
 
-    if (!searchResponse.ok) {
-      const errorText = await searchResponse.text();
-      console.error(`Search API failed: ${searchResponse.status}`, errorText);
-      throw new Error(`Search API failed: ${searchResponse.status}`);
-    }
-
-    const searchData = await searchResponse.json();
-    const analysisStartTime = performance.now();
-
-    if (!searchData.success) {
-      console.error('Search API returned error:', searchData.error);
-      throw new Error(searchData.error || 'Search failed');
+    if (!searchResults.success) {
+      console.error('Search service returned error:', searchResults.error);
+      throw new Error(searchResults.error || 'Search failed');
     }
 
     // Update statistics
-    stats.results.totalProducts = searchData.totalProducts || 0;
-    stats.results.relevantProducts = searchData.totalResults || 0;
-    stats.results.collections = Object.keys(searchData.collectionStats || {}).length;
+    stats.results.totalProducts = searchResults.totalProducts || 0;
+    stats.results.relevantProducts = searchResults.totalResults || 0;
+    stats.results.collections = Object.keys(searchResults.collectionStats || {}).length;
 
     console.log(`Found ${stats.results.relevantProducts} similar products out of ${stats.results.totalProducts} total products`);
     console.log(`Searching across ${stats.results.collections} collections`);
 
     // Process search results to extract competitors with valid pricing
     console.log('Processing search results to extract competitors');
-    const validProducts = searchData.results.filter((product: any) => 
+    const validProducts = searchResults.results.filter((product: any) => 
       product.price?.original && 
       product.store?.name && 
       product.score > 0.3
@@ -222,7 +202,7 @@ export async function POST(req: Request) {
       `Analysis completed in ${(performance.now() - startTime).toFixed(2)}ms`
     ];
 
-    stats.timings.analysis = performance.now() - analysisStartTime;
+    stats.timings.analysis = performance.now() - (searchStartTime + stats.timings.search);
     stats.timings.total = performance.now() - startTime;
 
     return NextResponse.json({
