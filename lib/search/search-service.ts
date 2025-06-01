@@ -262,11 +262,26 @@ export async function performSearch(params: {
   imageSearch?: boolean;
   request?: NextRequest;
 }): Promise<SearchResults> {
-  const { query = "Image Search", analyzedDescription, imageSearch } = params;
+  const { query = "Image Search", analyzedDescription } = params;
+  let { imageSearch } = params; // Make imageSearch mutable
   
   console.log('Search service called with:', { query, imageSearch });
+  
+  // Validate image analysis data if provided
   if (imageSearch && analyzedDescription) {
-    console.log('Image analysis provided:', JSON.stringify(analyzedDescription, null, 2));
+    const hasValidAnalysis = analyzedDescription && 
+      analyzedDescription.type && 
+      analyzedDescription.genre && 
+      analyzedDescription.pattern && 
+      analyzedDescription.length;
+    
+    if (!hasValidAnalysis) {
+      console.log('Invalid or incomplete image analysis data - falling back to text search');
+      // Override imageSearch to false if analysis data is invalid
+      imageSearch = false;
+    } else {
+      console.log('Image analysis provided:', JSON.stringify(analyzedDescription, null, 2));
+    }
   }
 
   // Only require query if not doing an image search
@@ -318,7 +333,7 @@ export async function performSearch(params: {
   console.log(`Total products found: ${allProducts.length}`);
   
   // Determine search strategy
-  if (analyzedDescription && query && query !== "Image Search") {
+  if (analyzedDescription && query && query !== "Image Search" && imageSearch) {
     // Hybrid search
     isHybridSearch = true;
     console.log('Using hybrid text+image search');
@@ -391,9 +406,12 @@ export async function performSearch(params: {
       
     } catch (error) {
       console.error('Error in hybrid search:', error);
-      throw error;
+      // Fall back to text-only search on error
+      console.log('Falling back to text-only search due to error');
+      similarProducts = findSimilarProducts(query, allProducts);
+      console.log(`Text search found ${similarProducts.length} products`);
     }
-  } else if (analyzedDescription && (imageSearch || !query || query === "Image Search")) {
+  } else if (analyzedDescription && imageSearch && (imageSearch || !query || query === "Image Search")) {
     // Image-only search
     console.log('Using image-based similarity search only');
     
@@ -416,7 +434,14 @@ export async function performSearch(params: {
       
     } catch (error) {
       console.error('Error in image similarity search:', error);
-      throw error;
+      // Fall back to text search if available, otherwise throw
+      if (query && query !== "Image Search") {
+        console.log('Falling back to text search due to error');
+        similarProducts = findSimilarProducts(query, allProducts);
+        console.log(`Text search found ${similarProducts.length} products`);
+      } else {
+        throw error;
+      }
     }
   } else {
     // Text-only search
