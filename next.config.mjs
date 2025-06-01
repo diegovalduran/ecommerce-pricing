@@ -29,6 +29,17 @@ const nextConfig = {
       bodySizeLimit: '2mb',
     },
   },
+  // Exclude firebaseDB/functions from Next.js build
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals.push({
+        'genkit': 'commonjs genkit',
+        '@genkit-ai/googleai': 'commonjs @genkit-ai/googleai',
+        '@genkit-ai/firebase': 'commonjs @genkit-ai/firebase'
+      })
+    }
+    return config
+  },
   async headers() {
     return [
       {
