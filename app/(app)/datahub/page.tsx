@@ -145,11 +145,19 @@ export default function DataHubPage() {
       let allProducts: Product[] = []
       let lastDoc = null
       let hasMore = true
+      const BATCH_SIZE = 100 // Smaller batch size for better performance
       
       while (hasMore) {
-        let q = query(collection(db, collectionName))
+        let q = query(
+          collection(db, collectionName),
+          limit(BATCH_SIZE)
+        )
         if (lastDoc) {
-          q = query(collection(db, collectionName), startAfter(lastDoc))
+          q = query(
+            collection(db, collectionName),
+            startAfter(lastDoc),
+            limit(BATCH_SIZE)
+          )
         }
         
         const snapshot = await getDocs(q)
@@ -175,7 +183,7 @@ export default function DataHubPage() {
         allProducts = [...allProducts, ...productsFromBatch]
         
         lastDoc = snapshot.docs[snapshot.docs.length - 1]
-        hasMore = snapshot.docs.length > 0
+        hasMore = snapshot.docs.length === BATCH_SIZE // Only continue if we got a full batch
       }
 
       // Cache the results
@@ -188,11 +196,24 @@ export default function DataHubPage() {
     }
   }
 
-  // Function to fetch multiple collections in parallel
+  // Function to fetch multiple collections in parallel with rate limiting
   const fetchCollectionsParallel = async (collectionNames: string[]) => {
-    const results = await Promise.all(
-      collectionNames.map(name => fetchCollection(name))
-    )
+    const BATCH_SIZE = 3 // Process 3 collections at a time
+    const results: Product[][] = []
+    
+    for (let i = 0; i < collectionNames.length; i += BATCH_SIZE) {
+      const batch = collectionNames.slice(i, i + BATCH_SIZE)
+      const batchResults = await Promise.all(
+        batch.map(name => fetchCollection(name))
+      )
+      results.push(...batchResults)
+      
+      // Add a small delay between batches to prevent rate limiting
+      if (i + BATCH_SIZE < collectionNames.length) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
+    
     return results.flat()
   }
 

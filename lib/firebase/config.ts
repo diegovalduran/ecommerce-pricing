@@ -16,7 +16,19 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+
+// Configure Firestore with pagination settings
 const db = getFirestore(app);
+db.settings({
+  cacheSizeBytes: 50 * 1024 * 1024, // 50 MB cache
+  experimentalForceLongPolling: true, // Use long polling for better reliability
+  experimentalAutoDetectLongPolling: true,
+  ignoreUndefinedProperties: true,
+  // Add pagination settings
+  experimentalForcePagination: true,
+  experimentalMaxBatchSize: 1000
+});
+
 const storage = getStorage(app);
 
 export { db, storage };

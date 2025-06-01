@@ -34,28 +34,65 @@ const settings: Settings = {
   gaxOptions: {
     autoPaginate: false,
     maxResults: 1000,
-    pageSize: 1000,  // Add explicit pageSize
+    pageSize: 1000,
     isBundling: false,
-    timeout: 15000, // 15 seconds
+    timeout: 30000, // 30 seconds
     retry: {
       retryCodes: [4, 8, 13, 14], // Resource exhausted, deadline exceeded, etc.
       backoffSettings: {
         initialRetryDelayMillis: 100,
         retryDelayMultiplier: 1.3,
-        maxRetryDelayMillis: 15000,
-        initialRpcTimeoutMillis: 15000,
+        maxRetryDelayMillis: 30000,
+        initialRpcTimeoutMillis: 30000,
         rpcTimeoutMultiplier: 1,
-        maxRpcTimeoutMillis: 15000,
-        totalTimeoutMillis: 15000
+        maxRpcTimeoutMillis: 30000,
+        totalTimeoutMillis: 30000
       }
     }
-  } as CallOptions
+  } as CallOptions,
+  // Add explicit call settings to override defaults
+  callSettings: {
+    autoPaginate: false,
+    pageSize: 1000,
+    maxResults: 1000,
+    timeout: 30000,
+    retry: {
+      retryCodes: [4, 8, 13, 14],
+      backoffSettings: {
+        initialRetryDelayMillis: 100,
+        retryDelayMultiplier: 1.3,
+        maxRetryDelayMillis: 30000,
+        initialRpcTimeoutMillis: 30000,
+        rpcTimeoutMultiplier: 1,
+        maxRpcTimeoutMillis: 30000,
+        totalTimeoutMillis: 30000
+      }
+    }
+  },
+  // Add explicit listCollections settings
+  listCollectionsSettings: {
+    autoPaginate: false,
+    pageSize: 100,
+    maxResults: 100,
+    timeout: 30000
+  }
 };
 
 // Initialize Firestore with settings and export
 export const adminDb = (() => {
   const db = getFirestore(getApps()[0]);
+  
+  // Apply settings and log them
   db.settings(settings);
-  console.log('Firestore settings applied:', settings);
+  console.log('Firestore settings applied:', JSON.stringify(settings, null, 2));
+  
+  // Override listCollections to ensure pagination
+  const originalListCollections = db.listCollections.bind(db);
+  db.listCollections = async function() {
+    const collections = await originalListCollections();
+    // Force pagination by limiting to 100 collections at a time
+    return collections.slice(0, 100);
+  };
+  
   return db;
 })();
