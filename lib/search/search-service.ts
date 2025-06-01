@@ -2,6 +2,8 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from "@/lib/firebase/config";
 import { findSimilarProducts, findSimilarProductsByImage } from '@/utils/text-similarity';
 import { NextRequest } from 'next/server';
+import { adminDb } from '@/lib/firebase/admin';
+import { CollectionReference } from 'firebase-admin/firestore';
 
 export interface SearchResults {
   success: boolean;
@@ -27,24 +29,22 @@ export interface SearchResults {
   collectionStats: Record<string, number | string>;
 }
 
-async function getCollections(request?: NextRequest): Promise<string[]> {
+async function getCollections(): Promise<string[]> {
   try {
-    // Construct the full URL using the request's URL
-    const baseUrl = request ? new URL(request.url).origin : '';
-    const apiUrl = `${baseUrl}/api/collections`;
-    console.log('Fetching collections from:', apiUrl);
+    console.log('Fetching collections using admin SDK...');
+    const collections = await adminDb.listCollections();
+    const collectionNames = collections.map((col: CollectionReference) => col.id);
     
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch collections: ${response.status}`);
-    }
-    const data = await response.json();
-    return data.collections.filter((name: string) => 
+    // Filter out system collections
+    const filteredCollections = collectionNames.filter((name: string) => 
       name !== "products" && 
       name !== "Dashboard Inputs" && 
       name !== "recent-scrapes" &&
       name !== "batchJobs"
     );
+    
+    console.log(`Found ${filteredCollections.length} collections:`, filteredCollections);
+    return filteredCollections;
   } catch (error) {
     console.error('Error fetching collections:', error);
     throw error;
@@ -57,7 +57,7 @@ export async function performSearch(params: {
   imageSearch?: boolean;
   request?: NextRequest;
 }): Promise<SearchResults> {
-  const { query = "Image Search", analyzedDescription, imageSearch, request } = params;
+  const { query = "Image Search", analyzedDescription, imageSearch } = params;
   
   console.log('Search service called with:', { query, imageSearch });
   if (imageSearch && analyzedDescription) {
@@ -71,7 +71,7 @@ export async function performSearch(params: {
 
   // Get all collections
   console.log('Fetching available collections...');
-  const collections = await getCollections(request);
+  const collections = await getCollections();
   console.log(`Found ${collections.length} collections:`, collections);
 
   let similarProducts = [];
