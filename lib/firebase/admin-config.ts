@@ -1,5 +1,5 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, Settings } from 'firebase-admin/firestore';
 
 // Initialize Firebase Admin
 const apps = getApps();
@@ -26,4 +26,16 @@ if (!apps.length) {
   }
 }
 
+// Configure Firestore settings
+const settings: Settings = {
+  ignoreUndefinedProperties: true,
+  // Set reasonable timeout and retry settings
+  timeoutSeconds: 30,
+  maxRetries: 3,
+  // Disable auto-pagination by default
+  autoPaginate: false
+};
+
+// Export the Firestore admin instance with custom settings
 export const adminDb = getFirestore(getApps()[0]);
+adminDb.settings(settings);
