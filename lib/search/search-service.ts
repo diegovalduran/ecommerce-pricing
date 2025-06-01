@@ -220,6 +220,7 @@ async function getRelevantCollections(query: string): Promise<string[]> {
     console.log('Fetching collections using admin SDK...');
     const collections = await adminDb.listCollections();
     const collectionNames = collections.map((col: CollectionReference) => col.id);
+    console.log(`Found ${collectionNames.length} total collections`);
     
     // Filter out system collections
     const filteredCollections = collectionNames.filter((name: string) => 
@@ -228,28 +229,49 @@ async function getRelevantCollections(query: string): Promise<string[]> {
       name !== "recent-scrapes" &&
       name !== "batchJobs"
     );
+    console.log(`Filtered to ${filteredCollections.length} non-system collections`);
 
     // If it's a text search, try to find relevant collections based on the query
     if (query && query !== "Image Search") {
       const variations = getCategoryVariations(query);
       console.log('Searching with category variations:', variations);
       
-      const relevantCollections = filteredCollections.filter(name => {
+      // Score collections based on relevance to the query
+      const scoredCollections = filteredCollections.map(name => {
         const nameLower = name.toLowerCase();
-        // Check if collection name contains any variation
-        return variations.some(variant => nameLower.includes(variant));
+        const score = variations.reduce((total, variant) => {
+          // Give higher score for exact matches and matches at the start of words
+          if (nameLower === variant) return total + 3;
+          if (nameLower.includes(`-${variant}-`) || nameLower.startsWith(`${variant}-`) || nameLower.endsWith(`-${variant}`)) {
+            return total + 2;
+          }
+          if (nameLower.includes(variant)) return total + 1;
+          return total;
+        }, 0);
+        return { name, score };
       });
 
-      // If we found relevant collections, use those. Otherwise, use all collections
+      // Sort by score and take top 10
+      const relevantCollections = scoredCollections
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+        .map(c => c.name);
+
       if (relevantCollections.length > 0) {
-        console.log(`Found ${relevantCollections.length} relevant collections for query "${query}"`);
+        console.log(`Found ${relevantCollections.length} most relevant collections for query "${query}"`);
         console.log('Relevant collections:', relevantCollections);
         return relevantCollections;
       }
     }
     
-    console.log(`Using all ${filteredCollections.length} collections`);
-    return filteredCollections;
+    // If no relevant collections found or no query provided, use a limited set of collections
+    // Sort by name to ensure consistent results
+    const limitedCollections = filteredCollections
+      .sort()
+      .slice(0, 10);
+    
+    console.log(`Using top 10 collections from ${filteredCollections.length} available collections`);
+    return limitedCollections;
   } catch (error) {
     console.error('Error fetching collections:', error);
     throw error;
