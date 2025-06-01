@@ -20,7 +20,6 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 // Initialize Firestore with custom settings
 const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-  experimentalAutoDetectLongPolling: true,
   cacheSizeBytes: 50 * 1024 * 1024 // 50 MB cache
 });
 
