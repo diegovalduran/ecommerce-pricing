@@ -1,26 +1,45 @@
 import { NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase/admin-config'
 
-export async function GET() {
-  try {
-    // Get collections with pagination
-    const collections = await adminDb.listCollections();
-    const collectionNames = collections.map(col => col.id)
-      .filter(name => name !== "products" && name !== "Dashboard Inputs" && name !== "recent-scrapes")
-      .slice(0, 100); // Limit to 100 collections
+const PAGE_SIZE = 20; // Default page size for paginated requests
 
-    // Get counts for collections in parallel with a limit
-    const BATCH_SIZE = 10; // Process 10 collections at a time
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const usePagination = searchParams.get('paginate') !== 'false'; // Default to true
+    const page = Math.max(1, Number(searchParams.get('page')) || 1);
+    const pageSize = Math.min(Number(searchParams.get('pageSize')) || PAGE_SIZE, 50); // Cap at 50
+
+    // Get all collections
+    const allCollections = await adminDb.listCollections();
+    
+    // Filter out system collections
+    const filteredCollections = allCollections
+      .map(col => col.id)
+      .filter(name => !["products", "Dashboard Inputs", "recent-scrapes"].includes(name));
+
+    // Get the collections to process based on pagination setting
+    const collectionNames = usePagination 
+      ? filteredCollections.slice((page - 1) * pageSize, page * pageSize)
+      : filteredCollections;
+
+    // Get counts for collections in parallel with a smaller batch size
+    const BATCH_SIZE = usePagination ? 5 : 10; // Larger batch size for non-paginated requests
     const collectionDetails = [];
     
     for (let i = 0; i < collectionNames.length; i += BATCH_SIZE) {
       const batch = collectionNames.slice(i, i + BATCH_SIZE);
       const batchPromises = batch.map(async (name) => {
         try {
-          const snapshot = await adminDb.collection(name).count().get();
+          // Use a more efficient count query
+          const snapshot = await adminDb.collection(name)
+            .limit(1000) // Limit the count to prevent timeouts
+            .count()
+            .get();
+
           const totalProducts = snapshot.data().count;
 
-          // Get the most recent document
+          // Get the most recent document with a limit
           const lastDoc = await adminDb.collection(name)
             .orderBy('scrapedAt', 'desc')
             .limit(1)
@@ -48,22 +67,29 @@ export async function GET() {
       collectionDetails.push(...batchResults);
     }
 
-    // Set cache headers
+    // Set cache headers with a shorter duration
     const response = NextResponse.json({
       collections: collectionNames,
       details: collectionDetails,
-      total: collectionNames.length,
-      hasMore: collections.length > 100 // Indicate if there are more collections
+      ...(usePagination && {
+        pagination: {
+          currentPage: page,
+          pageSize,
+          totalCollections: filteredCollections.length,
+          totalPages: Math.ceil(filteredCollections.length / pageSize),
+          hasMore: page * pageSize < filteredCollections.length
+        }
+      })
     });
 
-    // Cache for 5 minutes
-    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+    // Cache for 1 minute
+    response.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120');
 
     return response;
   } catch (error) {
     console.error('Error fetching collections:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch collections' },
+      { error: 'Failed to fetch collections', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
