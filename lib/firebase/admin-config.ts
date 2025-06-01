@@ -34,6 +34,7 @@ const settings: Settings = {
   gaxOptions: {
     autoPaginate: false,
     maxResults: 1000,
+    pageSize: 1000,  // Add explicit pageSize
     isBundling: false,
     timeout: 15000, // 15 seconds
     retry: {
