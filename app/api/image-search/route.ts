@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getApiUrl } from '@/lib/utils/api-helpers';
-import { db } from "@/lib/firebase/config";
+import { adminDb } from "@/lib/firebase/admin-config";
 import { findSimilarProductsByImage } from '@/utils/text-similarity';
 
 export async function POST(req: Request) {
@@ -38,12 +38,12 @@ export async function POST(req: Request) {
       "analyzed description": analyzedDescription
     };
     
-    // Perform image similarity search
+    // Perform image similarity search using admin SDK
     console.log('Starting image similarity search...');
     const similarProducts = await findSimilarProductsByImage(
       inputProduct,
       collections,
-      db,
+      adminDb,
       0.1 // threshold
     );
     

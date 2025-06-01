@@ -1,5 +1,5 @@
-// Import Firebase functions
-import { collection, getDocs } from 'firebase/firestore';
+// Import Firebase Admin functions
+import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
 interface ScoredProduct {
     id: string;
@@ -262,7 +262,7 @@ export async function findSimilarProductsByImage(
     color?: string | string[];
   },
   collections: string[],
-  db: any, // Firestore database reference
+  db: Firestore,
   threshold: number = 0.1
 ): Promise<ScoredProduct[]> {
   if (!inputProduct || !inputProduct["analyzed description"]) {
@@ -297,12 +297,11 @@ export async function findSimilarProductsByImage(
     try {
       console.log(`Fetching products from collection: ${collectionName}`);
       
-      // Get collection reference and fetch documents using Firebase client SDK
-      const collectionRef = collection(db, collectionName);
-      const snapshot = await getDocs(collectionRef);
-      const products = snapshot.docs.map((doc: any) => ({
+      // Get collection reference and fetch documents using Firebase Admin SDK
+      const collectionRef = db.collection(collectionName);
+      const snapshot = await collectionRef.get();
+      const products = snapshot.docs.map(doc => ({
         id: doc.id,
-        collection: collectionName,
         ...doc.data()
       }));
       
