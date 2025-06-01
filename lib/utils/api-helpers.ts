@@ -13,14 +13,8 @@ export function getApiBaseUrl(): string {
     return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
   }
   
-  // In server-side context (production)
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  
-  // In server-side context (development)
-  const port = process.env.PORT || process.env.NEXT_PUBLIC_PORT || '3001';
-  return `http://127.0.0.1:${port}`;
+  // In server-side context, use relative URL
+  return '';
 }
 
 /**
@@ -30,5 +24,10 @@ export function getApiUrl(path: string): string {
   const baseUrl = getApiBaseUrl();
   // Ensure path starts with /api/
   const apiPath = path.startsWith('/api/') ? path : `/api/${path}`;
+  // For server-side requests, just return the path
+  if (typeof window === 'undefined') {
+    return apiPath;
+  }
+  // For client-side requests, include the base URL
   return `${baseUrl}${apiPath}`;
 }
