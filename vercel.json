@@ -9,12 +9,6 @@
     "app/api/**/*.ts": {
       "memory": 1024,
       "maxDuration": 300
-    },
-    "app/api/price-recommendation/route.ts": {
-      "maxDuration": 300
-    },
-    "app/api/search/route.ts": {
-      "maxDuration": 300
     }
   }
 }
