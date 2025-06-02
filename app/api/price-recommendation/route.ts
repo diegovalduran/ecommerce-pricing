@@ -4,6 +4,13 @@ import { findSimilarProducts } from '@/utils/text-similarity';
 import { adminDb } from '@/lib/firebase/admin-config';
 import { getRelevantCollections } from '@/lib/utils/collection-mapper';
 
+// Configure runtime for Vercel
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
+const BATCH_SIZE = 3; // Process collections in small batches
+const MAX_DOCS_PER_COLLECTION = 300; // Increased limit for more comprehensive results
+
 interface PriceData {
   original: number;
   discounted: number;
@@ -95,24 +102,45 @@ export async function POST(req: Request) {
       }, { status: 404 });
     }
 
-    // Search directly in the collections
+    // Search directly in the collections with batch processing
     const searchStartTime = performance.now();
     console.log('Searching collections:', relevantCollections);
     
-    const searchResults = await Promise.all(
-      relevantCollections.map(async (collectionName) => {
-        const snapshot = await adminDb.collection(collectionName).get();
-        const products = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          collection: collectionName
-        }));
-        return products;
-      })
-    );
+    let allProducts = [];
+    
+    // Process collections in smaller batches
+    for (let i = 0; i < relevantCollections.length; i += BATCH_SIZE) {
+      const batch = relevantCollections.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(async (collectionName) => {
+        try {
+          console.log(`Fetching from collection: ${collectionName}`);
+          const snapshot = await adminDb.collection(collectionName)
+            .orderBy('scrapedAt', 'desc')
+            .limit(MAX_DOCS_PER_COLLECTION)
+            .get();
+            
+          const products = snapshot.docs.map(doc => ({
+            id: doc.id,
+            collection: collectionName,
+            ...doc.data()
+          }));
+          
+          return products;
+        } catch (error) {
+          console.error(`Error fetching from ${collectionName}:`, error);
+          return [];
+        }
+      });
 
-    // Flatten and process results
-    const allProducts = searchResults.flat();
+      const batchResults = await Promise.all(batchPromises);
+      allProducts.push(...batchResults.flat());
+
+      // Add a small delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < relevantCollections.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
     stats.results.totalProducts = allProducts.length;
 
     // Find similar products using our similarity function

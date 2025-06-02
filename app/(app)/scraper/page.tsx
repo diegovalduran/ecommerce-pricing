@@ -119,18 +119,13 @@ export default function ScraperPage() {
       
       const data = await response.json()
       
-      if (!data.collections || !data.details) {
+      if (!data.collections || !data.stats) {
         throw new Error('No collections data received')
       }
 
-      // Create a map of collection details for quick lookup
-      const detailsMap = new Map(
-        data.details.map((detail: CollectionDetail) => [detail.name, detail])
-      )
-
       // Parse collection names into structured data
       const formattedCollections = data.collections
-        .filter((name: string) => name !== "products" && name !== "Dashboard Inputs")
+        .filter((name: string) => name !== "products" && name !== "batchJobs" && name !== "dashboard")
         .map((name: string) => {
           const parts = name.split('-')
           
@@ -140,11 +135,14 @@ export default function ScraperPage() {
           // Extract target audience (second part)
           const targetAudience = parts[1]?.toUpperCase() || 'Unknown'
           
-          // Extract category (remaining parts joined)
-          const category = parts.slice(2).join(' ').toUpperCase() || 'Unknown'
+          // Extract category (remaining parts except last)
+          const category = parts.slice(2, -1).join(' ').toUpperCase() || 'Unknown'
+          
+          // Extract region (last part)
+          const region = parts[parts.length - 1]?.toUpperCase() || 'Unknown'
 
-          // Get details from the map
-          const details = detailsMap.get(name) as CollectionDetail || { 
+          // Get stats from the stats object
+          const stats = data.stats[name] || { 
             totalProducts: 0, 
             lastUpdated: Date.now() 
           }
@@ -154,8 +152,9 @@ export default function ScraperPage() {
             brand,
             category,
             targetAudience,
-            totalProducts: details.totalProducts,
-            lastUpdated: details.lastUpdated
+            region,
+            totalProducts: stats.totalProducts || 0,
+            lastUpdated: stats.lastUpdated || Date.now()
           }
         })
 
