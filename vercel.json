@@ -1,60 +1,30 @@
 {
   "version": 2,
-  "builds": [
+  "buildCommand": "next build",
+  "devCommand": "next dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "headers": [
     {
-      "src": "package.json",
-      "use": "@vercel/next"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "headers": {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "X-Requested-With, Content-Type, Accept, Authorization"
-      },
-      "continue": true
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "X-Requested-With, Content-Type, Accept, Authorization"
+        }
+      ]
     }
   ],
   "functions": {
-    "app/api/analyze-image/route.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "app/api/batch-scrape/route.ts": {
-      "memory": 2048,
-      "maxDuration": 60
-    },
-    "app/api/collect-links/route.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "app/api/recommendations/price/route.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "app/api/search/route.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "app/api/image-search/route.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "app/api/collections/route.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "app/api/collections/[name]/route.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "app/api/recent-scrapes/route.ts": {
-      "memory": 512,
-      "maxDuration": 60
-    },
-    "app/api/price-recommendation/route.ts": {
+    "app/api/**/*.ts": {
       "memory": 1024,
       "maxDuration": 60
     }
