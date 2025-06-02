@@ -21,13 +21,20 @@ export function middleware(request: NextRequest) {
     request.nextUrl.pathname.startsWith(route)
   )
 
-  // If it's a public API route, bypass authentication
+  // If it's a public API route, bypass authentication and add necessary headers
   if (isPublicApiRoute) {
-    return NextResponse.next({
-      headers: {
-        'x-middleware-skip': '1'
-      }
-    })
+    const response = NextResponse.next()
+    
+    // Add headers to bypass Vercel's authentication
+    response.headers.set('x-middleware-skip', '1')
+    response.headers.set('x-vercel-skip-auth', '1')
+    
+    // Add CORS headers
+    response.headers.set('Access-Control-Allow-Origin', '*')
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    response.headers.set('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Authorization')
+    
+    return response
   }
 
   // For all other routes, continue with normal authentication
