@@ -8,6 +8,9 @@ import { FilterState } from '@/types/database'
 const statsCache = new Map<string, { stats: any, timestamp: number }>()
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
+// Force dynamic to disable caching at the route level
+export const dynamic = 'force-dynamic'
+
 interface CollectionStats {
   totalProducts: number
   averagePrice: number
@@ -35,10 +38,11 @@ export interface FilterParams {
 
 async function getCollectionStats(
   collectionName: string, 
-  filters?: FilterParams
+  filters?: FilterParams,
+  forceRefresh?: boolean
 ): Promise<CollectionStats> {
-  // Check cache first (only if no filters)
-  if (!filters) {
+  // Check cache first (only if no filters and not forcing refresh)
+  if (!filters && !forceRefresh) {
     const cached = statsCache.get(collectionName)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return cached.stats
@@ -205,6 +209,7 @@ export async function GET(request: Request) {
     const page = parseInt(searchParams.get('page') || '1')
     const pageSize = parseInt(searchParams.get('pageSize') || '20')
     const skip = (page - 1) * pageSize
+    const forceRefresh = searchParams.get('forceRefresh') === 'true'
 
     // Parse filter parameters
     const filters: FilterParams = {}
@@ -241,7 +246,7 @@ export async function GET(request: Request) {
     // Get stats for all collections in parallel
     const collectionStats = await Promise.all(
       validCollections.map(async (name) => {
-        const stats = await getCollectionStats(name, filters)
+        const stats = await getCollectionStats(name, filters, forceRefresh)
         return {
           name,
           ...stats

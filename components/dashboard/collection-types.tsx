@@ -70,7 +70,7 @@ export function CollectionTypes() {
       setIsLoading(page === 1)
       setError(null)
       
-      const response = await fetch(`/api/collections?page=${page}&pageSize=10`)
+      const response = await fetch(`/api/collections?page=${page}&pageSize=10&forceRefresh=true`)
       if (!response.ok) {
         throw new Error(`API returned ${response.status}`)
       }
