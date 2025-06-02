@@ -66,7 +66,7 @@ export default function SettingsPage() {
           <TabsTrigger value="privacy">Privacy</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="account">
+        <TabsContent value="account" className="h-[calc(100vh-16rem)] overflow-y-auto">
           <Card>
             <CardHeader>
               <CardTitle>Account Settings</CardTitle>
@@ -175,7 +175,7 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="security">
+        <TabsContent value="security" className="h-[calc(100vh-16rem)] overflow-y-auto">
           <div className="grid gap-4 md:grid-cols-2">
             <Card className="md:col-span-2">
               <CardHeader>
@@ -255,7 +255,7 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="preferences">
+        <TabsContent value="preferences" className="h-[calc(100vh-16rem)] overflow-y-auto">
           <Card>
             <CardHeader>
               <CardTitle>Preferences</CardTitle>
@@ -351,7 +351,7 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="notifications">
+        <TabsContent value="notifications" className="h-[calc(100vh-16rem)] overflow-y-auto">
           <Card>
             <CardHeader>
               <CardTitle>Notification Settings</CardTitle>
@@ -365,8 +365,8 @@ export default function SettingsPage() {
                     <Checkbox
                       id="email-notifications"
                       defaultChecked={settings.notifications.email}
-                      onChange={(e) =>
-                        updateNotificationSettings({ ...settings.notifications, email: e.target.checked })
+                      onCheckedChange={(checked: boolean) =>
+                        updateNotificationSettings({ ...settings.notifications, email: checked })
                       }
                     />
                     <Label htmlFor="email-notifications">Email Notifications</Label>
@@ -375,8 +375,8 @@ export default function SettingsPage() {
                     <Checkbox
                       id="push-notifications"
                       defaultChecked={settings.notifications.push}
-                      onChange={(e) =>
-                        updateNotificationSettings({ ...settings.notifications, push: e.target.checked })
+                      onCheckedChange={(checked: boolean) =>
+                        updateNotificationSettings({ ...settings.notifications, push: checked })
                       }
                     />
                     <Label htmlFor="push-notifications">Push Notifications</Label>
@@ -385,7 +385,9 @@ export default function SettingsPage() {
                     <Checkbox
                       id="sms-notifications"
                       defaultChecked={settings.notifications.sms}
-                      onChange={(e) => updateNotificationSettings({ ...settings.notifications, sms: e.target.checked })}
+                      onCheckedChange={(checked: boolean) =>
+                        updateNotificationSettings({ ...settings.notifications, sms: checked })
+                      }
                     />
                     <Label htmlFor="sms-notifications">SMS Notifications</Label>
                   </div>
@@ -396,8 +398,8 @@ export default function SettingsPage() {
                     <Checkbox
                       id="account-activity"
                       defaultChecked={settings.notifications.accountActivity}
-                      onChange={(e) =>
-                        updateNotificationSettings({ ...settings.notifications, accountActivity: e.target.checked })
+                      onCheckedChange={(checked: boolean) =>
+                        updateNotificationSettings({ ...settings.notifications, accountActivity: checked })
                       }
                     />
                     <Label htmlFor="account-activity">Account Activity</Label>
@@ -406,8 +408,8 @@ export default function SettingsPage() {
                     <Checkbox
                       id="new-features"
                       defaultChecked={settings.notifications.newFeatures}
-                      onChange={(e) =>
-                        updateNotificationSettings({ ...settings.notifications, newFeatures: e.target.checked })
+                      onCheckedChange={(checked: boolean) =>
+                        updateNotificationSettings({ ...settings.notifications, newFeatures: checked })
                       }
                     />
                     <Label htmlFor="new-features">New Features and Updates</Label>
@@ -416,8 +418,8 @@ export default function SettingsPage() {
                     <Checkbox
                       id="marketing"
                       defaultChecked={settings.notifications.marketing}
-                      onChange={(e) =>
-                        updateNotificationSettings({ ...settings.notifications, marketing: e.target.checked })
+                      onCheckedChange={(checked: boolean) =>
+                        updateNotificationSettings({ ...settings.notifications, marketing: checked })
                       }
                     />
                     <Label htmlFor="marketing">Marketing and Promotions</Label>
@@ -428,7 +430,9 @@ export default function SettingsPage() {
                 <Label htmlFor="notification-frequency">Notification Frequency</Label>
                 <Select
                   value={settings.notifications.frequency}
-                  onValueChange={(value) => updateNotificationSettings({ ...settings.notifications, frequency: value })}
+                  onValueChange={(value: "real-time" | "daily" | "weekly") =>
+                    updateNotificationSettings({ ...settings.notifications, frequency: value })
+                  }
                 >
                   <SelectTrigger id="notification-frequency">
                     <SelectValue placeholder="Select Frequency" />
@@ -455,7 +459,7 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="privacy">
+        <TabsContent value="privacy" className="h-[calc(100vh-16rem)] overflow-y-auto">
           <Card>
             <CardHeader>
               <CardTitle>Privacy Settings</CardTitle>
@@ -473,8 +477,8 @@ export default function SettingsPage() {
                       <Switch
                         id="analytics-sharing"
                         checked={settings.privacy.analyticsSharing}
-                        onChange={(e) =>
-                          updatePrivacySettings({ ...settings.privacy, analyticsSharing: e.target.checked })
+                        onCheckedChange={(checked: boolean) =>
+                          updatePrivacySettings({ ...settings.privacy, analyticsSharing: checked })
                         }
                       />
                     </div>
@@ -483,8 +487,8 @@ export default function SettingsPage() {
                       <Switch
                         id="personalized-ads"
                         checked={settings.privacy.personalizedAds}
-                        onChange={(e) =>
-                          updatePrivacySettings({ ...settings.privacy, personalizedAds: e.target.checked })
+                        onCheckedChange={(checked: boolean) =>
+                          updatePrivacySettings({ ...settings.privacy, personalizedAds: checked })
                         }
                       />
                     </div>
@@ -497,7 +501,9 @@ export default function SettingsPage() {
                   <CardContent>
                     <RadioGroup
                       value={settings.privacy.visibility}
-                      onValueChange={(value) => updatePrivacySettings({ ...settings.privacy, visibility: value })}
+                      onValueChange={(value: "public" | "private") =>
+                        updatePrivacySettings({ ...settings.privacy, visibility: value })
+                      }
                     >
                       <div className="flex items-center space-x-2">
                         <RadioGroupItem value="public" id="visibility-public" />
@@ -519,7 +525,9 @@ export default function SettingsPage() {
                   <CardContent>
                     <Select
                       value={settings.privacy.dataRetention}
-                      onValueChange={(value) => updatePrivacySettings({ ...settings.privacy, dataRetention: value })}
+                      onValueChange={(value: "6-months" | "1-year" | "2-years" | "indefinite") =>
+                        updatePrivacySettings({ ...settings.privacy, dataRetention: value })
+                      }
                     >
                       <SelectTrigger id="data-retention">
                         <SelectValue placeholder="Select Data Retention Period" />
