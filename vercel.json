@@ -1,0 +1,62 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "X-Requested-With, Content-Type, Accept, Authorization"
+      },
+      "continue": true
+    }
+  ],
+  "functions": {
+    "app/api/analyze-image/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/batch-scrape/route.ts": {
+      "memory": 2048,
+      "maxDuration": 60
+    },
+    "app/api/collect-links/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/recommendations/price/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/search/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/image-search/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/collections/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/collections/[name]/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/recent-scrapes/route.ts": {
+      "memory": 512,
+      "maxDuration": 60
+    },
+    "app/api/price-recommendation/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  }
+} 
