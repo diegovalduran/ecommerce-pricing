@@ -50,6 +50,37 @@ interface RecentScrape {
   lastUpdated?: number;
 }
 
+interface Collection {
+  name: string
+  brand: string
+  category: string
+  categoryType: string
+  region: string
+  totalProducts: number
+  lastUpdated: string
+}
+
+interface CollectionStats {
+  totalProducts: number
+  averagePrice: number
+  lowestPrice: number
+  highestPrice: number
+  averageDiscount: number
+  activePromotions: number
+  lastUpdated: string
+}
+
+interface CollectionsResponse {
+  collections: string[]
+  stats: Record<string, CollectionStats>
+  pagination: {
+    currentPage: number
+    totalPages: number
+    totalCollections: number
+    hasMore: boolean
+  }
+}
+
 const BatchProgress = ({ progress }: { progress: RecentScrape['batchProgress'] }) => {
   if (!progress) return null;
 
@@ -99,73 +130,90 @@ export default function ScraperPage() {
   const [brand, setBrand] = useState("")
   const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null)
   const [recentScrapes, setRecentScrapes] = useState<RecentScrape[]>([])
-  const [collections, setCollections] = useState<CollectionData[]>([])
+  const [collections, setCollections] = useState<Collection[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [hasMore, setHasMore] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
 
   const isFormValid = url && category && targetAudience && region && brand
 
-  // Fetch collections on component mount
-  useEffect(() => {
-    loadCollections()
-  }, [])
-
-  const loadCollections = async () => {
-    setIsLoading(true)
+  const loadCollections = async (page: number = 1) => {
     try {
-      const response = await fetch('/api/collections')
+      setIsLoading(page === 1)
+      setError(null)
+      
+      const response = await fetch(`/api/collections?page=${page}&pageSize=10&forceRefresh=true`)
       if (!response.ok) {
         throw new Error(`API returned ${response.status}`)
       }
       
-      const data = await response.json()
+      const data = await response.json() as CollectionsResponse
       
-      if (!data.collections || !data.stats) {
+      if (!data.collections) {
         throw new Error('No collections data received')
       }
 
-      // Parse collection names into structured data
-      const formattedCollections = data.collections
-        .filter((name: string) => name !== "products" && name !== "batchJobs" && name !== "dashboard")
-        .map((name: string) => {
-          const parts = name.split('-')
-          
-          // Extract brand (first part)
-          const brand = parts[0]?.toUpperCase() || 'Unknown'
-          
-          // Extract target audience (second part)
-          const targetAudience = parts[1]?.toUpperCase() || 'Unknown'
-          
-          // Extract category (remaining parts except last)
-          const category = parts.slice(2, -1).join(' ').toUpperCase() || 'Unknown'
-          
-          // Extract region (last part)
-          const region = parts[parts.length - 1]?.toUpperCase() || 'Unknown'
+      // Transform collection names into structured data
+      const formattedCollections = data.collections.map((name: string) => {
+        const parts = name.split('-')
+        
+        // Get product count from stats
+        const collectionStats = data.stats?.[name]
+        const productCount = collectionStats?.totalProducts || 0
 
-          // Get stats from the stats object
-          const stats = data.stats[name] || { 
-            totalProducts: 0, 
-            lastUpdated: Date.now() 
-          }
+        // Extract information from collection name
+        const brand = parts[0]?.toUpperCase() || 'Unknown'
+        const category = parts[1]?.toUpperCase() || 'Unknown'
+        const categoryType = parts[2]?.toUpperCase() || 'Unknown'
+        const region = parts[parts.length - 1]?.toUpperCase() || 'Unknown'
 
-          return {
-            name,
-            brand,
-            category,
-            targetAudience,
-            region,
-            totalProducts: stats.totalProducts || 0,
-            lastUpdated: stats.lastUpdated || Date.now()
-          }
+        return {
+          name,
+          brand,
+          category,
+          categoryType,
+          region,
+          totalProducts: productCount,
+          lastUpdated: collectionStats?.lastUpdated || new Date().toISOString()
+        }
+      })
+
+      if (page === 1) {
+        setCollections(formattedCollections)
+      } else {
+        // Filter out any duplicates when loading more
+        setCollections(prev => {
+          const existingNames = new Set(prev.map(c => c.name))
+          const newCollections = formattedCollections.filter(c => !existingNames.has(c.name))
+          return [...prev, ...newCollections]
         })
+      }
 
-      setCollections(formattedCollections)
+      // Update pagination state
+      setHasMore(data.pagination.hasMore)
+      setCurrentPage(data.pagination.currentPage)
+
     } catch (error) {
-      console.error('Error loading collections:', error)
-      toast.error('Failed to load collections')
+      console.error('Error fetching collections:', error)
+      setError(error instanceof Error ? error.message : 'Failed to fetch collections')
     } finally {
       setIsLoading(false)
+      setIsLoadingMore(false)
     }
   }
+
+  const loadMore = () => {
+    if (!isLoadingMore && hasMore) {
+      setIsLoadingMore(true)
+      loadCollections(currentPage + 1)
+    }
+  }
+
+  useEffect(() => {
+    loadCollections(1)
+  }, [])
 
   // Load recent scrapes on component mount
   useEffect(() => {
@@ -860,7 +908,7 @@ export default function ScraperPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={loadCollections}
+                onClick={() => loadCollections(1)}
                 className="flex items-center gap-2"
               >
                 <RefreshCw className="h-4 w-4" />
@@ -869,57 +917,44 @@ export default function ScraperPage() {
             </CardHeader>
             <CardContent>
               {isLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                </div>
+                <div className="text-sm text-muted-foreground">Loading collections...</div>
+              ) : error ? (
+                <div className="text-sm text-red-500">Error: {error}</div>
               ) : collections.length === 0 ? (
-                <div className="text-sm text-muted-foreground text-center py-8">
-                  No collections found
-                </div>
+                <div className="text-sm text-muted-foreground">No collections found</div>
               ) : (
                 <div className="space-y-4">
                   {collections.map((collection) => (
-                    <div key={collection.name} className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="flex items-center gap-2"
-                          onClick={() => handleRescrape(collection.name)}
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                          Rescrape
-                        </Button>
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-sm font-medium">{collection.name}</h4>
-                            <div className="flex items-center gap-1.5">
-                              <Badge variant="secondary" className="flex items-center gap-1">
-                                <Store className="h-3 w-3" />
-                                {collection.brand}
-                              </Badge>
-                              <Badge variant="secondary" className="flex items-center gap-1">
-                                <Tag className="h-3 w-3" />
-                                {collection.category}
-                              </Badge>
-                              <Badge variant="secondary" className="flex items-center gap-1">
-                                <Users className="h-3 w-3" />
-                                {collection.targetAudience}
-                              </Badge>
-                              <Badge variant="secondary" className="flex items-center gap-1">
-                                <Globe className="h-3 w-3" />
-                                {collection.region}
-                              </Badge>
-                            </div>
+                    <div key={collection.name} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-medium">{collection.name}</h4>
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="secondary" className="flex items-center gap-1">
+                              <Store className="h-3 w-3" />
+                              {collection.brand}
+                            </Badge>
+                            <Badge variant="secondary" className="flex items-center gap-1">
+                              <Tag className="h-3 w-3" />
+                              {collection.category}
+                            </Badge>
+                            <Badge variant="secondary" className="flex items-center gap-1">
+                              <Users className="h-3 w-3" />
+                              {collection.categoryType}
+                            </Badge>
+                            <Badge variant="secondary" className="flex items-center gap-1">
+                              <Globe className="h-3 w-3" />
+                              {collection.region}
+                            </Badge>
                           </div>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <span>Last updated {new Date(collection.lastUpdated).toLocaleString()}</span>
-                            <span>•</span>
-                            <span className="flex items-center gap-1">
-                              <ShoppingBag className="h-3.5 w-3.5" />
-                              {collection.totalProducts} products
-                            </span>
-                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <span>Last updated {new Date(collection.lastUpdated).toLocaleString()}</span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1">
+                            <ShoppingBag className="h-3.5 w-3.5" />
+                            {collection.totalProducts} products
+                          </span>
                         </div>
                       </div>
                       <Button 
@@ -933,6 +968,17 @@ export default function ScraperPage() {
                       </Button>
                     </div>
                   ))}
+                  {hasMore && (
+                    <div className="flex justify-center mt-4">
+                      <Button
+                        onClick={loadMore}
+                        disabled={isLoadingMore}
+                        variant="outline"
+                      >
+                        {isLoadingMore ? 'Loading...' : 'Load More'}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
