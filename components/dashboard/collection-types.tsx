@@ -25,6 +25,27 @@ interface Collection {
   brand: string
 }
 
+interface CollectionStats {
+  totalProducts: number
+  averagePrice: number
+  lowestPrice: number
+  highestPrice: number
+  averageDiscount: number
+  activePromotions: number
+  lastUpdated: string
+}
+
+interface CollectionsResponse {
+  collections: string[]
+  stats: Record<string, CollectionStats>
+  pagination: {
+    currentPage: number
+    totalPages: number
+    totalCollections: number
+    hasMore: boolean
+  }
+}
+
 // Function to normalize category names
 const normalizeCategory = (category: string): string => {
   const normalized = category.toUpperCase()
@@ -54,37 +75,35 @@ export function CollectionTypes() {
         throw new Error(`API returned ${response.status}`)
       }
       
-      const data = await response.json()
+      const data = await response.json() as CollectionsResponse
       
       if (!data.collections) {
         throw new Error('No collections data received')
       }
 
       // Transform collection names into structured data
-      const formattedCollections = await Promise.all(
-        data.collections.map(async (name: string) => {
-          const parts = name.split('-')
-          
-          // Get product count from details
-          const details = data.details.find((d: any) => d.name === name)
-          const productCount = details?.totalProducts || 0
+      const formattedCollections = data.collections.map((name: string) => {
+        const parts = name.split('-')
+        
+        // Get product count from stats
+        const collectionStats = data.stats?.[name]
+        const productCount = collectionStats?.totalProducts || 0
 
-          // Extract information from collection name
-          const brand = parts[0]?.toUpperCase() || 'Unknown'
-          const category = normalizeCategory(parts[1] || 'Unknown')
-          const categoryType = parts[2]?.toUpperCase() || 'Unknown'
-          const region = parts[parts.length - 1]?.toUpperCase() || 'Unknown'
+        // Extract information from collection name
+        const brand = parts[0]?.toUpperCase() || 'Unknown'
+        const category = normalizeCategory(parts[1] || 'Unknown')
+        const categoryType = parts[2]?.toUpperCase() || 'Unknown'
+        const region = parts[parts.length - 1]?.toUpperCase() || 'Unknown'
 
-          return {
-            name,
-            brand,
-            category,
-            categoryType,
-            region,
-            totalProducts: productCount
-          }
-        })
-      )
+        return {
+          name,
+          brand,
+          category,
+          categoryType,
+          region,
+          totalProducts: productCount
+        }
+      })
 
       if (page === 1) {
         setCollections(formattedCollections)
@@ -92,7 +111,12 @@ export function CollectionTypes() {
         const categories = [...new Set(formattedCollections.map(c => c.category))]
         setAvailableCategories(categories)
       } else {
-        setCollections(prev => [...prev, ...formattedCollections])
+        // Filter out any duplicates when loading more
+        setCollections(prev => {
+          const existingNames = new Set(prev.map(c => c.name))
+          const newCollections = formattedCollections.filter(c => !existingNames.has(c.name))
+          return [...prev, ...newCollections]
+        })
       }
 
       // Update pagination state
@@ -189,8 +213,8 @@ export function CollectionTypes() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredCollections.map((collection) => (
-              <Card key={collection.name}>
+            {filteredCollections.map((collection, index) => (
+              <Card key={`${collection.name}-${index}`}>
                 <CardHeader>
                   <CardTitle className="text-lg">{collection.brand}</CardTitle>
                   <CardDescription>

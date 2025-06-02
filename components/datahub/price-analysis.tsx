@@ -29,7 +29,8 @@ export function PriceAnalysis({
         "p-4 rounded-xl",
         "bg-card",
         "border border-border",
-        selectedProduct ? "h-[calc(100vh-36rem)] overflow-y-auto" : "",
+        "h-[calc(100vh-24rem)]", // Match the height of the left column
+        "overflow-y-auto", // Always scrollable
         "scrollbar-none", // Hide scrollbar
         "overflow-x-hidden" // Prevent horizontal scrolling
       )}>

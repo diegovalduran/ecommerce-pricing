@@ -8,7 +8,7 @@ import { ProductList } from "@/components/datahub/product-list"
 import { PriceAnalysis } from "@/components/datahub/price-analysis"
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { Product, FilterState, Stats } from "@/types/database"
-import { collection, getDocs, query, limit, startAfter } from 'firebase/firestore';
+import { collection, getDocs, query, limit, startAfter, orderBy } from 'firebase/firestore';
 import { db } from "@/lib/firebase/config";
 import { filterProducts } from "@/utils/product-filters"
 import { cn } from "@/lib/utils"
@@ -18,6 +18,30 @@ import debounce from 'lodash/debounce'
 
 // Cache for collection data
 const collectionCache = new Map<string, Product[]>()
+
+const BATCH_SIZE = 20; // Number of collections to load at once
+const DOCS_PER_COLLECTION = 100; // Maximum documents to fetch per collection
+
+interface CollectionStats {
+  totalProducts: number
+  averagePrice: number
+  lowestPrice: number
+  highestPrice: number
+  averageDiscount: number
+  activePromotions: number
+  lastUpdated: string
+}
+
+interface CollectionsResponse {
+  collections: string[]
+  stats: Record<string, CollectionStats>
+  pagination: {
+    currentPage: number
+    totalPages: number
+    totalCollections: number
+    hasMore: boolean
+  }
+}
 
 export default function DataHubPage() {
   const [searchQuery, setSearchQuery] = useState("")
@@ -62,7 +86,6 @@ export default function DataHubPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [hasMoreCollections, setHasMoreCollections] = useState(true)
   const [loadedCollections, setLoadedCollections] = useState<string[]>([])
-  const BATCH_SIZE = 99
 
   // Handle color changes
   const handleColorChange = (colors: React.SetStateAction<string[]>) => {
@@ -145,11 +168,22 @@ export default function DataHubPage() {
       let allProducts: Product[] = []
       let lastDoc = null
       let hasMore = true
+      let totalDocs = 0
       
-      while (hasMore) {
-        let q = query(collection(db, collectionName))
+      while (hasMore && totalDocs < DOCS_PER_COLLECTION) {
+        let q = query(
+          collection(db, collectionName),
+          orderBy('scrapedAt', 'desc'),
+          limit(BATCH_SIZE)
+        )
+        
         if (lastDoc) {
-          q = query(collection(db, collectionName), startAfter(lastDoc))
+          q = query(
+            collection(db, collectionName),
+            orderBy('scrapedAt', 'desc'),
+            startAfter(lastDoc),
+            limit(BATCH_SIZE)
+          )
         }
         
         const snapshot = await getDocs(q)
@@ -173,9 +207,10 @@ export default function DataHubPage() {
         }) as Product[]
         
         allProducts = [...allProducts, ...productsFromBatch]
+        totalDocs += productsFromBatch.length
         
         lastDoc = snapshot.docs[snapshot.docs.length - 1]
-        hasMore = snapshot.docs.length > 0
+        hasMore = snapshot.docs.length === BATCH_SIZE && totalDocs < DOCS_PER_COLLECTION
       }
 
       // Cache the results
@@ -200,41 +235,79 @@ export default function DataHubPage() {
     const fetchProducts = async () => {
       setIsLoading(true)
       try {
-        const collectionsResponse = await fetch('/api/collections')
+        // Get collections with their stats
+        const collectionsResponse = await fetch('/api/collections?pageSize=1000')
         if (!collectionsResponse.ok) {
           throw new Error(`API returned ${collectionsResponse.status}`)
         }
         
-        const data = await collectionsResponse.json()
+        const data = await collectionsResponse.json() as CollectionsResponse
         
         if (!data.collections) {
           throw new Error('No collections data received')
         }
 
-        // Filter out products, batchJobs, dashboard collections and their variants
-        const validCollections = data.collections.filter((name: string) => 
-          name !== "products" && 
-          name !== "batchJobs" && 
-          name !== "dashboard" &&
-          !name.startsWith("batchJobs-") && 
-          !name.startsWith("dashboard-")
-        )
-        const firstBatch = validCollections.slice(0, BATCH_SIZE)
+        // Process collections in batches
+        const firstBatch = data.collections.slice(0, BATCH_SIZE)
         setLoadedCollections(firstBatch)
-        setHasMoreCollections(validCollections.length > BATCH_SIZE)
+        setHasMoreCollections(data.pagination?.hasMore ?? false)
 
-        // Fetch first batch in parallel
+        // Calculate initial stats from collection stats
+        if (data.stats) {
+          const allStats = Object.values(data.stats)
+          const totalProducts = allStats.reduce((sum, stat) => sum + stat.totalProducts, 0)
+          const totalPrice = allStats.reduce((sum, stat) => sum + (stat.averagePrice * stat.totalProducts), 0)
+          const lowestPrice = Math.min(...allStats.map(stat => stat.lowestPrice).filter(price => price > 0))
+          const highestPrice = Math.max(...allStats.map(stat => stat.highestPrice))
+          const totalDiscount = allStats.reduce((sum, stat) => sum + (stat.averageDiscount * stat.totalProducts), 0)
+          const totalDiscountedProducts = allStats.reduce((sum, stat) => 
+            sum + (stat.averageDiscount > 0 ? stat.totalProducts : 0), 0)
+          const activePromotions = allStats.reduce((sum, stat) => sum + stat.activePromotions, 0)
+
+          // Update stats
+          setStats({
+            totalProducts,
+            averagePrice: `$${(totalPrice / totalProducts).toFixed(2)}`,
+            searchResults: totalProducts,
+            lowestPrice: `$${lowestPrice.toFixed(2)}`,
+            highestPrice: `$${highestPrice.toFixed(2)}`,
+            uniqueStores: data.collections.length, // Each collection represents a store
+            averageDiscount: `${(totalDiscount / totalDiscountedProducts).toFixed(1)}%`,
+            activePromotions,
+          })
+        } else {
+          // Set default stats if no stats are available
+          setStats({
+            totalProducts: 0,
+            averagePrice: "$0.00",
+            searchResults: 0,
+            lowestPrice: "$0.00",
+            highestPrice: "$0.00",
+            uniqueStores: data.collections.length,
+            averageDiscount: "0.0%",
+            activePromotions: 0,
+          })
+        }
+
+        // Fetch first batch of products in parallel
         const allProducts = await fetchCollectionsParallel(firstBatch)
-        
         setProducts(allProducts)
         setFilteredProducts(allProducts)
-
-        // Calculate initial stats
-        updateStats(allProducts)
 
       } catch (error) {
         console.error('Error fetching products:', error)
         setError(error instanceof Error ? error.message : 'Failed to fetch products')
+        // Set default stats on error
+        setStats({
+          totalProducts: 0,
+          averagePrice: "$0.00",
+          searchResults: 0,
+          lowestPrice: "$0.00",
+          highestPrice: "$0.00",
+          uniqueStores: 0,
+          averageDiscount: "0.0%",
+          activePromotions: 0,
+        })
       } finally {
         setIsLoading(false)
       }
@@ -243,63 +316,22 @@ export default function DataHubPage() {
     fetchProducts()
   }, [])
 
-  // Function to update stats
-  const updateStats = (products: Product[]) => {
-    const validProducts = products.filter(p => {
-      const effectivePrice = p.price?.discounted > 0 ? p.price.discounted : p.price?.original
-      return effectivePrice && effectivePrice > 0
-    })
-
-    const avgPrice = calculateAveragePrice(validProducts)
-    const lowestPrice = findLowestPrice(validProducts)
-    const highestPrice = findHighestPrice(validProducts)
-    const avgDiscount = calculateAverageDiscount(validProducts)
-    const activePromos = countActivePromotions(validProducts)
-    
-    const storeToCompany = (store: string) => {
-      if (store.toLowerCase().includes('zara')) return 'ZARA'
-      if (store.toLowerCase().includes('h&m') || store.toLowerCase().includes('hm')) return 'H&M'
-      if (store.toLowerCase().includes('uniqlo')) return 'UNIQLO'
-      return store
-    }
-
-    const uniqueStores = new Set(
-      validProducts.map(p => storeToCompany(p.store?.name || ''))
-    ).size
-
-    setStats({
-      totalProducts: validProducts.length,
-      averagePrice: `$${avgPrice.toFixed(2)}`,
-      searchResults: validProducts.length,
-      lowestPrice: `$${lowestPrice.toFixed(2)}`,
-      highestPrice: `$${highestPrice.toFixed(2)}`,
-      uniqueStores: uniqueStores,
-      averageDiscount: `${avgDiscount.toFixed(1)}%`,
-      activePromotions: activePromos,
-    })
-  }
-
-  // Function to load more collections
+  // Update loadMoreCollections to use the new stats
   const loadMoreCollections = async () => {
     if (isLoadingMore || !hasMoreCollections) return
 
     setIsLoadingMore(true)
     try {
-      const collectionsResponse = await fetch('/api/collections')
+      const collectionsResponse = await fetch('/api/collections?pageSize=1000')
       if (!collectionsResponse.ok) throw new Error(`API returned ${collectionsResponse.status}`)
       
-      const data = await collectionsResponse.json()
+      const data = await collectionsResponse.json() as CollectionsResponse
       if (!data.collections) throw new Error('No collections data received')
 
-      // Filter out products, batchJobs, dashboard collections and their variants
-      const validCollections = data.collections.filter((name: string) => 
-        name !== "products" && 
-        name !== "batchJobs" && 
-        name !== "dashboard" &&
-        !name.startsWith("batchJobs-") && 
-        !name.startsWith("dashboard-")
+      const nextBatch = data.collections.slice(
+        loadedCollections.length, 
+        loadedCollections.length + BATCH_SIZE
       )
-      const nextBatch = validCollections.slice(loadedCollections.length, loadedCollections.length + BATCH_SIZE)
       
       if (nextBatch.length === 0) {
         setHasMoreCollections(false)
@@ -309,13 +341,34 @@ export default function DataHubPage() {
       // Fetch next batch in parallel
       const newProducts = await fetchCollectionsParallel(nextBatch)
 
+      // Update collections and products
       setLoadedCollections(prev => [...prev, ...nextBatch])
       setProducts(prev => [...prev, ...newProducts])
       setFilteredProducts(prev => [...prev, ...newProducts])
-      setHasMoreCollections(validCollections.length > loadedCollections.length + BATCH_SIZE)
+      setHasMoreCollections(data.pagination.hasMore)
 
-      // Update stats with all products
-      updateStats([...products, ...newProducts])
+      // Update stats with new batch
+      const newStats = Object.values(data.stats)
+      const totalProducts = newStats.reduce((sum, stat) => sum + stat.totalProducts, 0)
+      const totalPrice = newStats.reduce((sum, stat) => sum + (stat.averagePrice * stat.totalProducts), 0)
+      const lowestPrice = Math.min(...newStats.map(stat => stat.lowestPrice).filter(price => price > 0))
+      const highestPrice = Math.max(...newStats.map(stat => stat.highestPrice))
+      const totalDiscount = newStats.reduce((sum, stat) => sum + (stat.averageDiscount * stat.totalProducts), 0)
+      const totalDiscountedProducts = newStats.reduce((sum, stat) => 
+        sum + (stat.averageDiscount > 0 ? stat.totalProducts : 0), 0)
+      const activePromotions = newStats.reduce((sum, stat) => sum + stat.activePromotions, 0)
+
+      setStats(prev => ({
+        ...prev,
+        totalProducts: prev.totalProducts + totalProducts,
+        averagePrice: `$${((parseFloat(prev.averagePrice.replace('$', '')) * prev.totalProducts + totalPrice) / (prev.totalProducts + totalProducts)).toFixed(2)}`,
+        searchResults: prev.searchResults + totalProducts,
+        lowestPrice: `$${Math.min(parseFloat(prev.lowestPrice.replace('$', '')), lowestPrice).toFixed(2)}`,
+        highestPrice: `$${Math.max(parseFloat(prev.highestPrice.replace('$', '')), highestPrice).toFixed(2)}`,
+        uniqueStores: prev.uniqueStores + nextBatch.length,
+        averageDiscount: `${((parseFloat(prev.averageDiscount.replace('%', '')) * prev.totalProducts + totalDiscount) / (prev.totalProducts + totalDiscountedProducts)).toFixed(1)}%`,
+        activePromotions: prev.activePromotions + activePromotions,
+      }))
 
     } catch (error) {
       console.error('Error loading more collections:', error)
@@ -466,8 +519,8 @@ export default function DataHubPage() {
         </div>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-[1fr,1fr] lg:grid-cols-[1fr,3fr] gap-4">
-            <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr,1fr] lg:grid-cols-[1fr,0.8fr] gap-4">
+            <div className="space-y-4 h-[calc(100vh-24rem)] overflow-y-auto">
               <DatabaseOverview 
                 stats={stats}
                 isLoading={isLoading}
