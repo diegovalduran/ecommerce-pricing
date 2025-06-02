@@ -35,33 +35,8 @@ interface ReportProps {
 }
 
 export function Report({ productData }: ReportProps) {
-  // Export to PDF handler
-  const handleExportPDF = async () => {
-    const reportElement = document.getElementById("analysis-report-root");
-    if (!reportElement) return;
-    const canvas = await html2canvas(reportElement, { scale: 2 });
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    // Fit image to page width
-    const imgWidth = pageWidth - 40;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-    pdf.addImage(imgData, "PNG", 20, 20, imgWidth, imgHeight, undefined, "FAST");
-    pdf.save("product-analysis-report.pdf");
-  };
-
   return (
     <div className="space-y-6" id="analysis-report-root">
-      <div className="flex justify-end mb-2">
-        <button
-          className="px-4 py-2 bg-primary text-white rounded shadow hover:bg-primary/90 transition"
-          onClick={handleExportPDF}
-          type="button"
-        >
-          Export as PDF
-        </button>
-      </div>
       <Card>
         <CardHeader>
           <CardTitle>Product Information</CardTitle>

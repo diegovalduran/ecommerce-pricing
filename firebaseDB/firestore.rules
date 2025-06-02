@@ -2,8 +2,31 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Allow read access to all collections
+    match /{collection}/{document=**} {
+      allow read: if true;
+    }
+    
+    // Allow write access to specific collections
+    match /products/{productId} {
+      allow write: if request.resource.data.keys().hasAll(['name', 'price', 'brand', 'category', 'targetAudience', 'region', 'scrapedAt'])
+                   && request.resource.data.scrapedAt is timestamp;
+    }
+    
+    match /batchJobs/{jobId} {
+      allow write: if request.resource.data.keys().hasAll(['status', 'createdAt', 'updatedAt'])
+                   && request.resource.data.createdAt is timestamp
+                   && request.resource.data.updatedAt is timestamp;
+    }
+    
+    match /dashboard/{document=**} {
+      allow write: if request.resource.data.keys().hasAll(['updatedAt'])
+                   && request.resource.data.updatedAt is timestamp;
+    }
+    
+    // Deny all other writes
     match /{document=**} {
-      allow read, write: if false;
+      allow write: if false;
     }
   }
 }

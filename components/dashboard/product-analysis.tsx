@@ -10,6 +10,9 @@ import { cn } from "@/lib/utils"
 import { collection, addDoc, updateDoc, doc } from "firebase/firestore"
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
 import { db, storage } from "@/lib/firebase/config"
+import html2canvas from "html2canvas"
+import jsPDF from "jspdf"
+import { toast } from "sonner"
 
 interface ProductAnalysisProps {
   onAnalysisStateChange?: (isAnalyzing: boolean) => void
@@ -334,9 +337,26 @@ export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: 
     setError(null);
   }
 
-  const handleExport = () => {
-    console.log("Exporting report...")
-  }
+  const handleExport = async () => {
+    const reportElement = document.getElementById("analysis-report-root");
+    if (!reportElement) return;
+    
+    try {
+      const canvas = await html2canvas(reportElement, { scale: 2 });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      // Fit image to page width
+      const imgWidth = pageWidth - 40;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      pdf.addImage(imgData, "PNG", 20, 20, imgWidth, imgHeight, undefined, "FAST");
+      pdf.save("product-analysis-report.pdf");
+    } catch (error) {
+      console.error("Error exporting PDF:", error);
+      toast.error("Failed to export report");
+    }
+  };
 
   return (
     <div className="w-full max-w-none">

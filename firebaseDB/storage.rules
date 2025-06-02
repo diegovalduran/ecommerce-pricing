@@ -5,8 +5,21 @@ rules_version = '2';
 //    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
+    // Allow read access to all files
     match /{allPaths=**} {
-      allow read, write: if true; // For development purposes, allow all reads and writes
+      allow read: if true;
+    }
+    
+    // Allow write access only to product images
+    match /product-images/{imageId} {
+      allow write: if request.resource.size < 5 * 1024 * 1024 // 5MB max
+                   && request.resource.contentType.matches('image/.*') // Only images
+                   && imageId.matches('^[0-9]+-.*$'); // Must start with timestamp
+    }
+    
+    // Deny all other writes
+    match /{allPaths=**} {
+      allow write: if false;
     }
   }
 }
