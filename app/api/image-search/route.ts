@@ -1,9 +1,25 @@
 import { NextResponse } from 'next/server';
-import { getApiUrl } from '@/lib/utils/api-helpers';
 import { adminDb } from "@/lib/firebase/admin-config";
 import { findSimilarProductsByImage } from '@/utils/text-similarity';
 
+// Configure runtime for Vercel
+export const runtime = 'nodejs';
+export const maxDuration = 60; // 60 seconds max execution time
+
+// Helper function to get the base URL
+function getBaseUrl() {
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  if (process.env.NEXT_PUBLIC_BASE_URL) {
+    return process.env.NEXT_PUBLIC_BASE_URL;
+  }
+  return 'http://localhost:3000';
+}
+
 export async function POST(req: Request) {
+  const startTime = performance.now();
+  
   try {
     console.log('Image search API called');
     
@@ -21,9 +37,11 @@ export async function POST(req: Request) {
     console.log('Image search for product:', productName || 'Unnamed');
     console.log('Analyzed description:', JSON.stringify(analyzedDescription).substring(0, 200));
     
-    // Get all collections
+    // Get all collections using absolute URL
     console.log('Fetching available collections...');
-    const collectionsResponse = await fetch(getApiUrl('collections'));
+    const collectionsUrl = `${getBaseUrl()}/api/collections`;
+    const collectionsResponse = await fetch(collectionsUrl);
+    
     if (!collectionsResponse.ok) {
       throw new Error(`Failed to fetch collections: ${collectionsResponse.status}`);
     }
@@ -67,7 +85,8 @@ export async function POST(req: Request) {
       query: productName || "Image Search",
       isImageSearch: true,
       results: topResults,
-      totalResults: similarProducts.length
+      totalResults: similarProducts.length,
+      queryTime: performance.now() - startTime
     };
     
     return NextResponse.json(response);
@@ -76,7 +95,8 @@ export async function POST(req: Request) {
     console.error('Image search error:', error);
     return NextResponse.json({ 
       success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      queryTime: performance.now() - startTime
     }, { status: 500 });
   }
 } 

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { headers } from 'next/headers';
 import { getApiUrl } from '@/lib/utils/api-helpers';
 
 interface PriceData {
@@ -19,6 +20,17 @@ interface PriceInsight {
   type: string;
   description: string;
   impact: 'positive' | 'negative' | 'neutral';
+}
+
+// Helper function to get the base URL
+function getBaseUrl() {
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  if (process.env.NEXT_PUBLIC_BASE_URL) {
+    return process.env.NEXT_PUBLIC_BASE_URL;
+  }
+  return 'http://localhost:3000';
 }
 
 export async function POST(req: Request) {
@@ -82,9 +94,13 @@ export async function POST(req: Request) {
       })
     };
     
-    console.log('Search request body:', JSON.stringify(searchRequestBody).substring(0, 200) + (JSON.stringify(searchRequestBody).length > 200 ? '...' : ''));
+    console.log('Search request body:', JSON.stringify(searchRequestBody));
     
-    const searchResponse = await fetch(getApiUrl('search'), {
+    // Use absolute URL for the search API
+    const searchUrl = `${getBaseUrl()}/api/search`;
+    console.log('Search API URL:', searchUrl);
+    
+    const searchResponse = await fetch(searchUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

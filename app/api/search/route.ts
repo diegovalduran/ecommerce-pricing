@@ -1,14 +1,30 @@
 import { NextResponse } from 'next/server';
-import { getApiUrl } from '@/lib/utils/api-helpers';
 import { collection, getDocs, query, limit, orderBy, Firestore } from 'firebase/firestore';
 import { db } from "@/lib/firebase/config";
 import { findSimilarProducts, findSimilarProductsByImage } from '@/utils/text-similarity';
 import { adminDb } from '@/lib/firebase/admin-config';
 
+// Configure runtime for Vercel
+export const runtime = 'nodejs';
+export const maxDuration = 60; // 60 seconds max execution time
+
 const MAX_DOCS_PER_COLLECTION = 100; // Limit documents per collection
 const BATCH_SIZE = 3; // Process collections in small batches
 
+// Helper function to get the base URL
+function getBaseUrl() {
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  if (process.env.NEXT_PUBLIC_BASE_URL) {
+    return process.env.NEXT_PUBLIC_BASE_URL;
+  }
+  return 'http://localhost:3000';
+}
+
 export async function POST(req: Request) {
+  const startTime = performance.now();
+  
   try {
     console.log('Search API called');
     const body = await req.json();
@@ -29,9 +45,11 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    // Get collections with their stats
+    // Get collections with their stats using absolute URL
     console.log('Fetching collections with stats...');
-    const collectionsResponse = await fetch(getApiUrl('collections'));
+    const collectionsUrl = `${getBaseUrl()}/api/collections`;
+    const collectionsResponse = await fetch(collectionsUrl);
+    
     if (!collectionsResponse.ok) {
       console.error(`Failed to fetch collections: ${collectionsResponse.status}`);
       throw new Error(`Failed to fetch collections: ${collectionsResponse.status}`);
@@ -208,7 +226,8 @@ export async function POST(req: Request) {
       totalResults: similarProducts.length,
       currentPage: page,
       totalPages: Math.ceil(similarProducts.length / pageSize),
-      collectionStats
+      collectionStats,
+      queryTime: performance.now() - startTime
     };
     
     console.log('Sending search response:', {
@@ -218,7 +237,8 @@ export async function POST(req: Request) {
       resultsCount: response.results.length,
       totalResults: response.totalResults,
       currentPage: response.currentPage,
-      totalPages: response.totalPages
+      totalPages: response.totalPages,
+      queryTime: response.queryTime
     });
     
     return NextResponse.json(response);
@@ -226,7 +246,11 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error('Search API error:', error);
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Search failed' },
+      { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Search failed',
+        queryTime: performance.now() - startTime
+      },
       { status: 500 }
     );
   }

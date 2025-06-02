@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+// Configure runtime for Vercel
+export const runtime = 'nodejs';
+export const maxDuration = 60; // 60 seconds max execution time
+
 // Initialize the Google Generative AI with your API key
 const API_KEY = process.env.GOOGLE_API_KEY;
 if (!API_KEY) {
@@ -37,6 +41,8 @@ function normalizeCategory(productName: string): string {
 }
 
 export async function POST(request: Request) {
+    const startTime = performance.now();
+    
     try {
         if (!API_KEY) {
             throw new Error("Google API key is not configured");
@@ -47,7 +53,10 @@ export async function POST(request: Request) {
         console.log("🔍 [GEMINI] Product name:", productName);
 
         if (!imageUrl) {
-            return NextResponse.json({ error: "No image URL provided" }, { status: 400 });
+            return NextResponse.json({ 
+                error: "No image URL provided",
+                queryTime: performance.now() - startTime
+            }, { status: 400 });
         }
 
         // Normalize category based on product name
@@ -122,13 +131,15 @@ export async function POST(request: Request) {
         return NextResponse.json({ 
             success: true, 
             "analyzed description": analysis,
-            category // Return the detected category
+            category, // Return the detected category
+            queryTime: performance.now() - startTime
         });
     } catch (error) {
         console.error("🔍 [ERROR] Gemini analysis failed:", error);
         return NextResponse.json({ 
             error: "Failed to analyze image",
-            details: error instanceof Error ? error.message : "Unknown error"
+            details: error instanceof Error ? error.message : "Unknown error",
+            queryTime: performance.now() - startTime
         }, { status: 500 });
     }
 } 

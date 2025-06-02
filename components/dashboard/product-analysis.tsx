@@ -16,6 +16,14 @@ interface ProductAnalysisProps {
   onReportStateChange?: (showReport: boolean) => void
 }
 
+// Helper function to get the base URL
+function getBaseUrl() {
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+}
+
 export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: ProductAnalysisProps) {
   const [productData, setProductData] = useState<ProductData | null>(null)
   const [showReport, setShowReport] = useState(false)
@@ -197,7 +205,10 @@ export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: 
       console.log("Price recommendation request body:", JSON.stringify(requestBody, null, 2));
       console.log("Using combined search:", !!imageAnalysis && !!(data.name || data.description || data.category));
       
-      const fetchPromise = fetch("/api/price-recommendation", {
+      const apiUrl = `${getBaseUrl()}/api/price-recommendation`;
+      console.log("Calling price recommendation API at:", apiUrl);
+      
+      const fetchPromise = fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
