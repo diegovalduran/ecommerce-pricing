@@ -35,8 +35,8 @@ export interface UserSettings {
 
 const defaultSettings: UserSettings = {
   avatar: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/38184074.jpg-M4vCjTSSWVw5RwWvvmrxXBcNVU8MBU.jpeg",
-  fullName: "Dollar Singh",
-  email: "dollar.singh@example.com",
+  fullName: "Diego Valdez",
+  email: "diego.valdez@example.com",
   phone: "+1 (555) 123-4567",
   timezone: "utc-8",
   language: "en",
@@ -75,7 +75,12 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<UserSettings>(() => {
-    // Try to load settings from localStorage during initialization
+    // Always use default settings in production
+    if (process.env.NODE_ENV === 'production') {
+      return defaultSettings;
+    }
+    
+    // In development, try to load from localStorage
     if (typeof window !== "undefined") {
       const savedSettings = localStorage.getItem("userSettings")
       if (savedSettings) {
@@ -85,9 +90,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     return defaultSettings
   })
 
-  // Save settings to localStorage whenever they change
+  // Save settings to localStorage only in development
   useEffect(() => {
-    localStorage.setItem("userSettings", JSON.stringify(settings))
+    if (process.env.NODE_ENV !== 'production') {
+      localStorage.setItem("userSettings", JSON.stringify(settings))
+    }
   }, [settings])
 
   const updateSettings = (newSettings: Partial<UserSettings>) => {
