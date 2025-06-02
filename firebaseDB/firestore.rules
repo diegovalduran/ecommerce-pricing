@@ -24,9 +24,15 @@ service cloud.firestore {
                    && request.resource.data.updatedAt is timestamp;
     }
     
-    // Deny all other writes
-    match /{document=**} {
-      allow write: if false;
+    // Allow writes to dynamic collection names (brand-targetAudience-category-region)
+    match /{collection}/{document=**} {
+      allow write: if collection.matches(/^[a-z0-9]+-[a-z0-9]+-[a-z0-9]+-[a-z0-9]+$/)
+                   && request.resource.data.keys().hasAll(['name', 'price', 'brand', 'category', 'targetAudience', 'region', 'scrapedAt'])
+                   && request.resource.data.scrapedAt is timestamp
+                   && request.resource.data.brand == collection.split('-')[0]
+                   && request.resource.data.targetAudience == collection.split('-')[1]
+                   && request.resource.data.category == collection.split('-')[2]
+                   && request.resource.data.region == collection.split('-')[3];
     }
   }
 }
