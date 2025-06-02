@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
-import { getApiUrl } from '@/lib/utils/api-helpers';
+import { findSimilarProducts } from '@/utils/text-similarity';
+import { adminDb } from '@/lib/firebase/admin-config';
+import { getRelevantCollections } from '@/lib/utils/collection-mapper';
 
 interface PriceData {
   original: number;
@@ -81,62 +83,49 @@ export async function POST(req: Request) {
 
     console.log(`Searching for: "${searchQuery}"`);
 
-    // Use our advanced search API to find similar products
+    // Get relevant collections
+    const relevantCollections = getRelevantCollections(searchQuery);
+    stats.results.collections = relevantCollections.length;
+    
+    if (relevantCollections.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'No relevant collections found',
+        stats
+      }, { status: 404 });
+    }
+
+    // Search directly in the collections
     const searchStartTime = performance.now();
-    console.log('Calling search API with query:', searchQuery);
-    const hasImageAnalysis = !!analyzedDescription;
+    console.log('Searching collections:', relevantCollections);
     
-    const searchRequestBody = { 
-      query: searchQuery,
-      ...(hasImageAnalysis && { 
-        analyzedDescription, 
-        imageSearch: true 
+    const searchResults = await Promise.all(
+      relevantCollections.map(async (collectionName) => {
+        const snapshot = await adminDb.collection(collectionName).get();
+        const products = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          collection: collectionName
+        }));
+        return products;
       })
-    };
-    
-    console.log('Search request body:', JSON.stringify(searchRequestBody));
-    
-    // Use absolute URL for the search API
-    const searchUrl = `${getBaseUrl()}/api/search`;
-    console.log('Search API URL:', searchUrl);
-    
-    const searchResponse = await fetch(searchUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(searchRequestBody)
-    });
+    );
+
+    // Flatten and process results
+    const allProducts = searchResults.flat();
+    stats.results.totalProducts = allProducts.length;
+
+    // Find similar products using our similarity function
+    const similarProducts = findSimilarProducts(searchQuery, allProducts);
+    stats.results.relevantProducts = similarProducts.length;
     
     stats.timings.search = performance.now() - searchStartTime;
     console.log(`Search completed in ${stats.timings.search.toFixed(2)}ms`);
-    console.log('Search API response status:', searchResponse.status);
-
-    if (!searchResponse.ok) {
-      const errorText = await searchResponse.text();
-      console.error(`Search API failed: ${searchResponse.status}`, errorText);
-      throw new Error(`Search API failed: ${searchResponse.status}`);
-    }
-
-    const searchData = await searchResponse.json();
-    const analysisStartTime = performance.now();
-
-    if (!searchData.success) {
-      console.error('Search API returned error:', searchData.error);
-      throw new Error(searchData.error || 'Search failed');
-    }
-
-    // Update statistics
-    stats.results.totalProducts = searchData.totalProducts || 0;
-    stats.results.relevantProducts = searchData.totalResults || 0;
-    stats.results.collections = Object.keys(searchData.collectionStats || {}).length;
-
-    console.log(`Found ${stats.results.relevantProducts} similar products out of ${stats.results.totalProducts} total products`);
-    console.log(`Searching across ${stats.results.collections} collections`);
+    console.log(`Found ${similarProducts.length} similar products out of ${allProducts.length} total products`);
 
     // Process search results to extract competitors with valid pricing
     console.log('Processing search results to extract competitors');
-    const validProducts = searchData.results.filter((product: any) => 
+    const validProducts = similarProducts.filter((product: any) => 
       product.price?.original && 
       product.store?.name && 
       product.score > 0.3
@@ -238,7 +227,7 @@ export async function POST(req: Request) {
       `Analysis completed in ${(performance.now() - startTime).toFixed(2)}ms`
     ];
 
-    stats.timings.analysis = performance.now() - analysisStartTime;
+    stats.timings.analysis = performance.now() - searchStartTime;
     stats.timings.total = performance.now() - startTime;
 
     return NextResponse.json({
