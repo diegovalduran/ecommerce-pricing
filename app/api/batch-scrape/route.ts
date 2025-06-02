@@ -3,6 +3,7 @@ import { z } from "zod";
 import FirecrawlApp from "@mendable/firecrawl-js";
 import { Logger } from "@/app/utils/logger";
 import { adminDb } from '@/lib/firebase/admin-config';
+import { FieldValue } from 'firebase-admin/firestore';
 
 // Initialize FireCrawl client
 const firecrawl = new FirecrawlApp({
@@ -82,230 +83,182 @@ interface BatchRequest {
   batchSize?: number;
 }
 
-// Store active jobs
-const activeJobs = new Map<string, {
-  status: 'pending' | 'in-progress' | 'completed' | 'failed';
-  progress: number;
-  total: number;
-  completed: number;
-  failed: number;
-  results: any[];
-  phase: 'collecting' | 'scraping';
-}>();
-
-// Persist batch job progress to Firestore
-async function updateBatchJobInDb(batchId: string, job: any) {
+// Remove the in-memory activeJobs Map and use Firestore instead
+async function getJobStatus(batchId: string) {
   try {
-    // Update batchJobs (for backend tracking)
-    await adminDb.collection('batchJobs').doc(batchId).set({
-      completed: job.completed,
-      failed: job.failed,
-      phase: job.phase,
-      progress: job.progress,
-      total: job.total,
-      status: job.status,
-      results: job.results,
-      lastUpdated: new Date().toISOString(),
-    }, { merge: true });
-
-    // Also update recent-scrapes (for frontend display)
-    await adminDb.collection('recent-scrapes').doc(batchId).set({
-      batchProgress: {
-        completed: job.completed,
-        failed: job.failed,
-        phase: job.phase,
-        progress: job.progress,
-        total: job.total,
-      },
-      status: job.status,
-      lastUpdated: new Date().toISOString(),
-      // Optionally add more fields if needed
-    }, { merge: true });
-  } catch (err) {
-    console.error('❌ Failed to update batch job in Firestore:', err);
-  }
-}
-
-export async function POST(request: NextRequest) {
-  const logger = new Logger('batch-scrape');
-  logger.log("🚀 Received batch scraping request");
-  
-  try {
-    // Get the base URL from the request
-    const url = new URL(request.url);
-    const baseUrl = `${url.protocol}//${url.host}`;
-    
-    // Parse request body
-    const body = await request.json() as BatchRequest;
-    
-    // Validate request
-    const validatedData = batchRequestSchema.parse(body);
-    logger.log("📄 Batch request:", {
-      categoryUrl: validatedData.categoryUrl,
-      brand: validatedData.brand,
-      targetAudience: validatedData.targetAudience,
-      category: validatedData.category,
-      region: validatedData.region,
-      batchSize: validatedData.batchSize
-    });
-    
-    // Use provided batchId or generate one
-    const batchId = validatedData.batchId || Date.now().toString();
-    
-    // Initialize batch job
-    activeJobs.set(batchId, {
-      status: 'pending',
-      progress: 0,
-      total: 0,
-      completed: 0,
-      failed: 0,
-      results: [],
-      phase: 'collecting'
-    });
-    
-    // Start processing in background
-    processBatch(batchId, validatedData, baseUrl, logger, true).catch(error => {
-      logger.error("❌ Batch processing error:", error);
-      const job = activeJobs.get(batchId);
-      if (job) {
-        job.status = 'failed';
-      }
-    });
-    
-    return NextResponse.json({
-      success: true,
-      message: "Batch scraping started",
-      batchId
-    });
-    
+    const doc = await adminDb.collection('batchJobs').doc(batchId).get();
+    if (!doc.exists) {
+      return null;
+    }
+    return doc.data();
   } catch (error) {
-    logger.error("❌ Error processing request:", error);
-    return NextResponse.json(
-      { error: "Failed to process request", details: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
-    );
-  } finally {
-    logger.close();
+    console.error('Error getting job status:', error);
+    return null;
   }
 }
 
 // Process the entire batch
 async function processBatch(batchId: string, data: BatchRequest, baseUrl: string, logger: Logger, useTestUrls: boolean = false) {
-  const job = activeJobs.get(batchId);
-  if (!job) return;
-  
-  job.status = 'in-progress';
-  const { categoryUrl, brand, targetAudience, category, region, batchSize = 20 } = data;
-  
   try {
-    let productUrls: string[] = [];
+    // Initialize or get job status from Firestore
+    const initialJob = {
+      status: 'in-progress',
+      progress: 0,
+      total: 0,
+      completed: 0,
+      failed: 0,
+      results: [],
+      phase: 'collecting',
+      lastUpdated: new Date().toISOString()
+    };
+
+    await adminDb.collection('batchJobs').doc(batchId).set(initialJob);
+    const { categoryUrl, brand, targetAudience, category, region, batchSize = 20 } = data;
     
-    // Original link collection logic
-    logger.log("🔍 Collecting product links from category page...");
-    const linksResponse = await fetch(`${baseUrl}/api/collect-links`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: categoryUrl })
-    });
+    try {
+      let productUrls: string[] = [];
+      
+      // Original link collection logic
+      logger.log("🔍 Collecting product links from category page...");
+      const linksResponse = await fetch(`${baseUrl}/api/collect-links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: categoryUrl })
+      });
 
-    if (!linksResponse.ok) {
-      throw new Error(`Failed to collect links: ${linksResponse.statusText}`);
-    }
-
-    const { jobId: linksJobId } = await linksResponse.json();
-    if (!linksJobId) {
-      throw new Error('No job ID returned from collect-links');
-    }
-
-    // Poll for links collection completion
-    let attempts = 0;
-    const maxAttempts = 300;
-    const pollInterval = 2000; // 2 seconds between polls
-
-    while (attempts < maxAttempts) {
-      const statusResponse = await fetch(
-        `${baseUrl}/api/collect-links?jobId=${linksJobId}&url=${encodeURIComponent(categoryUrl)}`
-      );
-
-      if (!statusResponse.ok) {
-        throw new Error(`Failed to check links status: ${statusResponse.statusText}`);
+      if (!linksResponse.ok) {
+        throw new Error(`Failed to collect links: ${linksResponse.statusText}`);
       }
 
-      const status = await statusResponse.json();
-      logger.log(`📊 Current status:`, status);
+      const { jobId: linksJobId } = await linksResponse.json();
+      if (!linksJobId) {
+        throw new Error('No job ID returned from collect-links');
+      }
 
-      if (status.status === 'completed') {
-        // Get URLs from either data.productUrls or data.results.productUrls
-        const urls = status.data?.productUrls || status.data?.results?.productUrls || [];
-        productUrls = urls;
-        logger.log(`✅ Got ${productUrls.length} product URLs from completed status`);
-        break;
-      } else if (status.status === 'failed') {
-        throw new Error('Link collection failed');
-      } else if (status.status === 'processing') {
-        logger.log(`⏳ Still processing... attempt ${attempts + 1}/${maxAttempts}`);
+      // Poll for links collection completion
+      let attempts = 0;
+      const maxAttempts = 300;
+      const pollInterval = 2000;
+
+      while (attempts < maxAttempts) {
+        const statusResponse = await fetch(
+          `${baseUrl}/api/collect-links?jobId=${linksJobId}&url=${encodeURIComponent(categoryUrl)}`
+        );
+
+        if (!statusResponse.ok) {
+          throw new Error(`Failed to check links status: ${statusResponse.statusText}`);
+        }
+
+        const status = await statusResponse.json();
+        logger.log(`📊 Current status:`, status);
+
+        if (status.status === 'completed') {
+          const urls = status.data?.productUrls || status.data?.results?.productUrls || [];
+          productUrls = urls;
+          logger.log(`✅ Got ${productUrls.length} product URLs from completed status`);
+          break;
+        } else if (status.status === 'failed') {
+          throw new Error('Link collection failed');
+        }
+
         await new Promise(resolve => setTimeout(resolve, pollInterval));
         attempts++;
-        continue;
       }
 
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-      attempts++;
-    }
+      if (attempts >= maxAttempts) {
+        throw new Error('Link collection timed out after 10 minutes');
+      }
 
-    if (attempts >= maxAttempts) {
-      throw new Error('Link collection timed out after 10 minutes');
-    }
+      // Update job with total URLs found
+      await adminDb.collection('batchJobs').doc(batchId).update({
+        total: productUrls.length,
+        phase: 'scraping',
+        lastUpdated: new Date().toISOString()
+      });
 
-    // Update job with total URLs found (even if it's 0)
-    job.total = productUrls.length;
-    job.phase = 'scraping';
-    logger.log(`✅ Found ${productUrls.length} product URLs to scrape`);
-    await updateBatchJobInDb(batchId, job);
-    // Add a short delay to allow the frontend to catch up
-    await new Promise(resolve => setTimeout(resolve, 100));
+      logger.log(`✅ Found ${productUrls.length} product URLs to scrape`);
 
-    // If we have URLs, proceed with scraping
-    if (productUrls.length > 0) {
-      // Step 2: Process URLs in batches
-      for (let i = 0; i < productUrls.length; i += batchSize) {
-        const batch = productUrls.slice(i, i + batchSize);
-        logger.log(`Processing batch ${i/batchSize + 1} of ${Math.ceil(productUrls.length/batchSize)}`);
-        
-        for (const url of batch) {
-          try {
-            const result = await processUrl(url, brand, targetAudience, category, region, baseUrl);
-            job.completed++;
-            job.results.push(result);
-            logger.log(`✅ Successfully processed URL: ${url}`);
-            await updateBatchJobInDb(batchId, job);
-          } catch (error) {
-            job.failed++;
-            logger.error(`Failed to process URL: ${url}`, error);
-            await updateBatchJobInDb(batchId, job);
+      // If we have URLs, proceed with scraping
+      if (productUrls.length > 0) {
+        // Process URLs in batches
+        for (let i = 0; i < productUrls.length; i += batchSize) {
+          const batch = productUrls.slice(i, i + batchSize);
+          logger.log(`Processing batch ${i/batchSize + 1} of ${Math.ceil(productUrls.length/batchSize)}`);
+          
+          const batchPromises = batch.map(async (url) => {
+            try {
+              const result = await processUrl(url, brand, targetAudience, category, region, baseUrl);
+              await adminDb.collection('batchJobs').doc(batchId).update({
+                completed: FieldValue.increment(1),
+                results: FieldValue.arrayUnion(result),
+                lastUpdated: new Date().toISOString()
+              });
+              logger.log(`✅ Successfully processed URL: ${url}`);
+              return { success: true, url, result };
+            } catch (error) {
+              await adminDb.collection('batchJobs').doc(batchId).update({
+                failed: FieldValue.increment(1),
+                lastUpdated: new Date().toISOString()
+              });
+              logger.error(`Failed to process URL: ${url}`, error);
+              return { success: false, url, error };
+            }
+          });
+
+          await Promise.all(batchPromises);
+
+          // Update progress
+          const job = await getJobStatus(batchId);
+          if (job) {
+            const progress = Math.round(((job.completed + job.failed) / job.total) * 100);
+            await adminDb.collection('batchJobs').doc(batchId).update({
+              progress,
+              lastUpdated: new Date().toISOString()
+            });
+            logger.log(`📊 Progress: ${progress}% (${job.completed} completed, ${job.failed} failed)`);
           }
-          job.progress = Math.round(((job.completed + job.failed) / job.total) * 100);
-          logger.log(`📊 Progress: ${job.progress}% (${job.completed} completed, ${job.failed} failed)`);
-          await updateBatchJobInDb(batchId, job);
 
-          // If this is the last product, mark as completed/failed and update Firestore
-          if ((job.completed + job.failed) === job.total) {
-            job.status = job.failed === job.total ? 'failed' : 'completed';
-            logger.log(`🏁 Batch processing ${job.status}. Total: ${job.total}, Completed: ${job.completed}, Failed: ${job.failed}`);
-            await updateBatchJobInDb(batchId, job);
-          }
+          // Small delay between batches
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
-        // Small delay between batches to avoid overwhelming the server
-        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Final status update
+        const finalJob = await getJobStatus(batchId);
+        if (finalJob) {
+          const finalStatus = finalJob.failed === finalJob.total ? 'failed' : 'completed';
+          await adminDb.collection('batchJobs').doc(batchId).update({
+            status: finalStatus,
+            lastUpdated: new Date().toISOString()
+          });
+          logger.log(`🏁 Batch processing ${finalStatus}. Total: ${finalJob.total}, Completed: ${finalJob.completed}, Failed: ${finalJob.failed}`);
+        }
+      } else {
+        logger.log("⚠️ No product URLs found to scrape");
+        await adminDb.collection('batchJobs').doc(batchId).update({
+          status: 'completed',
+          lastUpdated: new Date().toISOString()
+        });
       }
-    } else {
-      logger.log("⚠️ No product URLs found to scrape");
+    } catch (error) {
+      logger.error("❌ Batch processing error:", error);
+      await adminDb.collection('batchJobs').doc(batchId).update({
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        lastUpdated: new Date().toISOString()
+      });
     }
-    
   } catch (error) {
-    logger.error("❌ Batch processing error:", error);
-    job.status = 'failed';
-    await updateBatchJobInDb(batchId, job);
+    logger.error("❌ Critical error in processBatch:", error);
+    // Ensure job is marked as failed even if the initial setup fails
+    try {
+      await adminDb.collection('batchJobs').doc(batchId).update({
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        lastUpdated: new Date().toISOString()
+      });
+    } catch (updateError) {
+      logger.error("❌ Failed to update job status:", updateError);
+    }
   }
 }
 
@@ -382,22 +335,80 @@ export async function GET(request: NextRequest) {
     );
   }
   
-  let job = activeJobs.get(batchId);
-  if (!job || !job.status || typeof job.progress !== 'number' || typeof job.total !== 'number' || typeof job.completed !== 'number' || typeof job.failed !== 'number' || !job.phase) {
+  try {
+    const job = await getJobStatus(batchId);
+    if (!job) {
+      return NextResponse.json(
+        { error: "Batch job not found" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      status: job.status,
+      phase: job.phase,
+      progress: job.progress,
+      total: job.total,
+      completed: job.completed,
+      failed: job.failed,
+      results: job.results,
+      error: job.error
+    });
+  } catch (error) {
+    console.error('Error fetching batch status:', error);
     return NextResponse.json(
-      { error: "Batch job not found or incomplete data" },
-      { status: 404 }
+      { error: "Failed to fetch batch status" },
+      { status: 500 }
     );
   }
+}
+
+export async function POST(request: NextRequest) {
+  const logger = new Logger('batch-scrape');
+  logger.log("🚀 Received batch scraping request");
   
-  return NextResponse.json({
-    success: true,
-    status: job.status,
-    phase: job.phase,
-    progress: job.progress,
-    total: job.total,
-    completed: job.completed,
-    failed: job.failed,
-    results: job.results
-  });
+  try {
+    // Get the base URL from the request
+    const url = new URL(request.url);
+    const baseUrl = `${url.protocol}//${url.host}`;
+    
+    // Parse request body
+    const body = await request.json() as BatchRequest;
+    
+    // Validate request
+    const validatedData = batchRequestSchema.parse(body);
+    logger.log("📄 Batch request:", {
+      categoryUrl: validatedData.categoryUrl,
+      brand: validatedData.brand,
+      targetAudience: validatedData.targetAudience,
+      category: validatedData.category,
+      region: validatedData.region,
+      batchSize: validatedData.batchSize
+    });
+    
+    // Use provided batchId or generate one
+    const batchId = validatedData.batchId || Date.now().toString();
+    
+    // Start processing in background
+    processBatch(batchId, validatedData, baseUrl, logger, true).catch(error => {
+      logger.error("❌ Batch processing error:", error);
+      // The error will be handled in processBatch and stored in Firestore
+    });
+    
+    return NextResponse.json({
+      success: true,
+      message: "Batch scraping started",
+      batchId
+    });
+    
+  } catch (error) {
+    logger.error("❌ Error processing request:", error);
+    return NextResponse.json(
+      { error: "Failed to process request", details: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
+  } finally {
+    logger.close();
+  }
 }

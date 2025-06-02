@@ -1,143 +1,61 @@
 import { NextResponse } from 'next/server'
-import { adminDb, listCollectionsAsync, getAllDocumentsAsync } from '@/lib/firebase/admin-config'
+import { adminDb } from '@/lib/firebase/admin-config'
 
-// Helper function to get collection details with pagination and timeout
-async function getCollectionDetails(name: string) {
+export async function GET() {
   try {
-    const collectionRef = adminDb.collection(name);
-    let totalProducts = 0;
-    let lastUpdated = Date.now();
+    // Get all collections
+    const collections = await adminDb.listCollections()
+    const collectionNames = collections.map(col => col.id)
+      .filter(name => name !== "products" && name !== "Dashboard Inputs" && name !== "recent-scrapes")
 
-    // Use async iterator to get documents
-    const iterator = getAllDocumentsAsync(collectionRef);
-    let count = 0;
-    let lastDoc = null;
+    // Get counts for all collections in parallel
+    const collectionDetails = await Promise.all(
+      collectionNames.map(async (name) => {
+        try {
+          const snapshot = await adminDb.collection(name).count().get()
+          const totalProducts = snapshot.data().count
 
-    for await (const doc of iterator) {
-      count++;
-      const data = doc.data();
-      if (data.scrapedAt) {
-        const timestamp = new Date(data.scrapedAt).getTime();
-        if (timestamp > lastUpdated) {
-          lastUpdated = timestamp;
+          // Get the most recent document
+          const lastDoc = await adminDb.collection(name)
+            .orderBy('scrapedAt', 'desc')
+            .limit(1)
+            .get()
+
+          const lastUpdated = lastDoc.empty ? Date.now() : 
+            new Date(lastDoc.docs[0].data().scrapedAt).getTime()
+
+          return {
+            name,
+            totalProducts,
+            lastUpdated
+          }
+        } catch (error) {
+          console.error(`Error fetching details for ${name}:`, error)
+          return {
+            name,
+            totalProducts: 0,
+            lastUpdated: Date.now()
+          }
         }
-      }
-      lastDoc = doc;
-    }
+      })
+    )
 
-    totalProducts = count;
-
-    return {
-      name,
-      totalProducts,
-      lastUpdated
-    }
-  } catch (error) {
-    console.error(`Error fetching details for ${name}:`, error)
-    return {
-      name,
-      totalProducts: 0,
-      lastUpdated: Date.now(),
-      error: error instanceof Error ? error.message : 'Unknown error'
-    }
-  }
-}
-
-export async function GET(request: Request) {
-  try {
-    // Get URL parameters for pagination
-    const url = new URL(request.url);
-    const page = parseInt(url.searchParams.get('page') || '1');
-    const pageSize = parseInt(url.searchParams.get('pageSize') || '10');
-    const skip = (page - 1) * pageSize;
-
-    // Get collections using async iterator
-    const collections: string[] = [];
-    const iterator = listCollectionsAsync(pageSize);
-    let currentPage = 1;
-    let currentSkip = 0;
-
-    for await (const collection of iterator) {
-      // Skip system collections
-      if (["products", "Dashboard Inputs", "recent-scrapes", "batchJobs"].includes(collection.id)) {
-        continue;
-      }
-
-      // Handle pagination
-      if (currentPage === page) {
-        if (currentSkip < skip) {
-          currentSkip++;
-          continue;
-        }
-        if (collections.length < pageSize) {
-          collections.push(collection.id);
-        }
-      } else if (currentSkip + collections.length >= pageSize) {
-        currentPage++;
-        currentSkip = 0;
-      }
-    }
-
-    // Get total count for pagination
-    const allCollections: string[] = [];
-    const countIterator = listCollectionsAsync();
-    for await (const collection of countIterator) {
-      if (!["products", "Dashboard Inputs", "recent-scrapes", "batchJobs"].includes(collection.id)) {
-        allCollections.push(collection.id);
-      }
-    }
-
-    const totalCollections = allCollections.length;
-    const totalPages = Math.ceil(totalCollections / pageSize);
-
-    // Process collections in smaller batches to prevent timeouts
-    const BATCH_SIZE = 3; // Process 3 collections at a time
-    const collectionDetails = [];
-    
-    for (let i = 0; i < collections.length; i += BATCH_SIZE) {
-      const batch = collections.slice(i, i + BATCH_SIZE);
-      const batchPromises = batch.map(name => getCollectionDetails(name));
-      
-      try {
-        const batchResults = await Promise.all(batchPromises);
-        collectionDetails.push(...batchResults);
-      } catch (error) {
-        console.error(`Error processing batch ${i/BATCH_SIZE + 1}:`, error);
-        continue;
-      }
-      
-      // Add a small delay between batches to prevent rate limiting
-      if (i + BATCH_SIZE < collections.length) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-    }
-
-    // Set cache headers with longer duration
+    // Set cache headers
     const response = NextResponse.json({
-      collections,
-      details: collectionDetails,
-      pagination: {
-        currentPage: page,
-        totalPages,
-        totalCollections,
-        pageSize,
-        hasMore: page < totalPages
-      }
-    });
+      collections: collectionNames,
+      details: collectionDetails
+    })
 
-    // Cache for 10 minutes
-    response.headers.set('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1200');
+    // Cache for 5 minutes
+    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
 
-    return response;
+    return response
   } catch (error) {
-    console.error('Error in collections API:', error);
+    console.error('Error fetching collections:', error)
     return NextResponse.json(
-      { 
-        error: 'Failed to fetch collections',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
+      { error: 'Failed to fetch collections' },
       { status: 500 }
-    );
+    )
   }
 }
 
@@ -154,15 +72,12 @@ export async function DELETE(request: Request) {
       });
     }
 
-    // Get all documents in the collection using async iterator
+    // Get all documents in the collection
     const collectionRef = adminDb.collection(collectionName);
-    const iterator = getAllDocumentsAsync(collectionRef);
-    const deletePromises = [];
-
-    for await (const doc of iterator) {
-      deletePromises.push(doc.ref.delete());
-    }
+    const snapshot = await collectionRef.get();
     
+    // Delete all documents in the collection
+    const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
     await Promise.all(deletePromises);
     
     return Response.json({ 

@@ -29,11 +29,6 @@ const defaultAvatars = [
   "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/9334228.jpg-eOsHCkvVrVAwcPHKYSs5sQwVKsqWpC.jpeg",
 ]
 
-type NotificationFrequency = "real-time" | "daily" | "weekly"
-type PrivacyLevel = "public" | "private"
-type VisibilityLevel = "public" | "private"
-type DataRetentionPeriod = "6-months" | "1-year" | "2-years" | "indefinite"
-
 export default function SettingsPage() {
   const { settings, updateSettings, updateNotificationSettings, updatePrivacySettings } = useSettings()
   const [selectedAvatar, setSelectedAvatar] = useState(settings.avatar)
@@ -57,43 +52,6 @@ export default function SettingsPage() {
   const handleSavePrivacy = () => {
     updatePrivacySettings(settings.privacy)
     toast.success("Privacy settings saved successfully")
-  }
-
-  const handleNotificationChange = (field: keyof typeof settings.notifications) => 
-    (checked: boolean) => {
-      updateNotificationSettings({ 
-        ...settings.notifications, 
-        [field]: checked 
-      })
-    }
-
-  const handleFrequencyChange = (value: NotificationFrequency) => {
-    updateNotificationSettings({
-      ...settings.notifications,
-      frequency: value
-    })
-  }
-
-  const handlePrivacyChange = (field: keyof typeof settings.privacy) =>
-    (checked: boolean) => {
-      updatePrivacySettings({
-        ...settings.privacy,
-        [field]: checked
-      })
-    }
-
-  const handlePrivacyLevelChange = (value: VisibilityLevel) => {
-    updatePrivacySettings({
-      ...settings.privacy,
-      visibility: value
-    })
-  }
-
-  const handleDataRetentionChange = (value: DataRetentionPeriod) => {
-    updatePrivacySettings({
-      ...settings.privacy,
-      dataRetention: value
-    })
   }
 
   return (
@@ -407,7 +365,9 @@ export default function SettingsPage() {
                     <Checkbox
                       id="email-notifications"
                       defaultChecked={settings.notifications.email}
-                      onCheckedChange={handleNotificationChange('email')}
+                      onChange={(e) =>
+                        updateNotificationSettings({ ...settings.notifications, email: e.target.checked })
+                      }
                     />
                     <Label htmlFor="email-notifications">Email Notifications</Label>
                   </div>
@@ -415,7 +375,9 @@ export default function SettingsPage() {
                     <Checkbox
                       id="push-notifications"
                       defaultChecked={settings.notifications.push}
-                      onCheckedChange={handleNotificationChange('push')}
+                      onChange={(e) =>
+                        updateNotificationSettings({ ...settings.notifications, push: e.target.checked })
+                      }
                     />
                     <Label htmlFor="push-notifications">Push Notifications</Label>
                   </div>
@@ -423,7 +385,7 @@ export default function SettingsPage() {
                     <Checkbox
                       id="sms-notifications"
                       defaultChecked={settings.notifications.sms}
-                      onCheckedChange={handleNotificationChange('sms')}
+                      onChange={(e) => updateNotificationSettings({ ...settings.notifications, sms: e.target.checked })}
                     />
                     <Label htmlFor="sms-notifications">SMS Notifications</Label>
                   </div>
@@ -434,7 +396,9 @@ export default function SettingsPage() {
                     <Checkbox
                       id="account-activity"
                       defaultChecked={settings.notifications.accountActivity}
-                      onCheckedChange={handleNotificationChange('accountActivity')}
+                      onChange={(e) =>
+                        updateNotificationSettings({ ...settings.notifications, accountActivity: e.target.checked })
+                      }
                     />
                     <Label htmlFor="account-activity">Account Activity</Label>
                   </div>
@@ -442,7 +406,9 @@ export default function SettingsPage() {
                     <Checkbox
                       id="new-features"
                       defaultChecked={settings.notifications.newFeatures}
-                      onCheckedChange={handleNotificationChange('newFeatures')}
+                      onChange={(e) =>
+                        updateNotificationSettings({ ...settings.notifications, newFeatures: e.target.checked })
+                      }
                     />
                     <Label htmlFor="new-features">New Features and Updates</Label>
                   </div>
@@ -450,7 +416,9 @@ export default function SettingsPage() {
                     <Checkbox
                       id="marketing"
                       defaultChecked={settings.notifications.marketing}
-                      onCheckedChange={handleNotificationChange('marketing')}
+                      onChange={(e) =>
+                        updateNotificationSettings({ ...settings.notifications, marketing: e.target.checked })
+                      }
                     />
                     <Label htmlFor="marketing">Marketing and Promotions</Label>
                   </div>
@@ -459,16 +427,16 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label htmlFor="notification-frequency">Notification Frequency</Label>
                 <Select
-                  defaultValue={settings.notifications.frequency as NotificationFrequency}
-                  onValueChange={(value: NotificationFrequency) => handleFrequencyChange(value)}
+                  value={settings.notifications.frequency}
+                  onValueChange={(value) => updateNotificationSettings({ ...settings.notifications, frequency: value })}
                 >
                   <SelectTrigger id="notification-frequency">
-                    <SelectValue placeholder="Select frequency" />
+                    <SelectValue placeholder="Select Frequency" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="real-time">Real-time</SelectItem>
-                    <SelectItem value="daily">Daily</SelectItem>
-                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="daily">Daily Digest</SelectItem>
+                    <SelectItem value="weekly">Weekly Summary</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -505,8 +473,8 @@ export default function SettingsPage() {
                       <Switch
                         id="analytics-sharing"
                         checked={settings.privacy.analyticsSharing}
-                        onCheckedChange={(checked) =>
-                          updatePrivacySettings({ ...settings.privacy, analyticsSharing: checked })
+                        onChange={(e) =>
+                          updatePrivacySettings({ ...settings.privacy, analyticsSharing: e.target.checked })
                         }
                       />
                     </div>
@@ -515,8 +483,8 @@ export default function SettingsPage() {
                       <Switch
                         id="personalized-ads"
                         checked={settings.privacy.personalizedAds}
-                        onCheckedChange={(checked) =>
-                          updatePrivacySettings({ ...settings.privacy, personalizedAds: checked })
+                        onChange={(e) =>
+                          updatePrivacySettings({ ...settings.privacy, personalizedAds: e.target.checked })
                         }
                       />
                     </div>
@@ -528,16 +496,16 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     <RadioGroup
-                      value={settings.privacy.visibility as VisibilityLevel}
-                      onValueChange={(value: VisibilityLevel) => handlePrivacyLevelChange(value)}
+                      value={settings.privacy.visibility}
+                      onValueChange={(value) => updatePrivacySettings({ ...settings.privacy, visibility: value })}
                     >
                       <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="public" id="public" />
-                        <Label htmlFor="public">Public</Label>
+                        <RadioGroupItem value="public" id="visibility-public" />
+                        <Label htmlFor="visibility-public">Public</Label>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="private" id="private" />
-                        <Label htmlFor="private">Private</Label>
+                        <RadioGroupItem value="private" id="visibility-private" />
+                        <Label htmlFor="visibility-private">Private</Label>
                       </div>
                     </RadioGroup>
                   </CardContent>
@@ -550,11 +518,11 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     <Select
-                      defaultValue={settings.privacy.dataRetention as DataRetentionPeriod}
-                      onValueChange={handleDataRetentionChange}
+                      value={settings.privacy.dataRetention}
+                      onValueChange={(value) => updatePrivacySettings({ ...settings.privacy, dataRetention: value })}
                     >
                       <SelectTrigger id="data-retention">
-                        <SelectValue placeholder="Select retention period" />
+                        <SelectValue placeholder="Select Data Retention Period" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="6-months">6 Months</SelectItem>

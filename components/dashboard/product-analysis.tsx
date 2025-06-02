@@ -61,7 +61,7 @@ export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: 
       const docRef = await addDoc(dashboardInputsRef, {
         productName: data.name,
         description: data.description || '',
-        formattedTimestamp,
+        formattedTimestamp, // Add human-readable timestamp
         timestamp: new Date().toISOString()
       });
       console.log("Initial product data saved to Firebase with ID:", docRef.id);
@@ -91,57 +91,88 @@ export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: 
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
               imageUrl,
-              productName: data.name
+              productName: data.name // Pass product name to help with category detection
             }),
             signal: controller.signal
           });
           
-          const analysisData = await analysisResponse.json();
-          
           if (!analysisResponse.ok) {
-            if (analysisData.code === "SKIPPED_ANALYSIS") {
-              console.log("🔍 [GEMINI] Image analysis skipped - continuing with text-only search");
-              // Continue without image analysis
-            } else {
-              throw new Error(analysisData.details || "Failed to analyze image");
-            }
-          } else if (analysisData.skipped) {
-            console.log("🔍 [GEMINI] Image analysis skipped - continuing with text-only search");
-            // Continue without image analysis
-          } else if (analysisData["analyzed description"]) {
-            imageAnalysis = analysisData["analyzed description"];
-            console.log("🔍 [GEMINI] Final description:", imageAnalysis);
-            
-            // Store the analysis results in Firebase
-            await updateDoc(doc(db, "Dashboard Inputs", docRef.id), {
-              "analyzed description": imageAnalysis
-            });
-            console.log("Document updated with image analysis");
+            const errorData = await analysisResponse.json();
+            throw new Error(errorData.details || "Failed to analyze image");
           }
           
-          // Only run image similarity search if we have analysis data and it wasn't skipped
-          if (imageAnalysis && !analysisData.skipped) {
-            try {
-              console.log("🔍 [SIMILARITY] Running image-based product similarity search...");
-              const imageSimilarityResponse = await fetch("/api/image-search", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  productName: data.name,
-                  analyzedDescription: imageAnalysis,
-                  imageSearch: true
-                }),
-                signal: controller.signal
-              });
+          const analysisData = await analysisResponse.json();
+          console.log("🔍 [GEMINI] Analysis result:", analysisData);
+          
+          if (!analysisData["analyzed description"]) {
+            throw new Error("No analysis data received from Gemini");
+          }
+          
+          imageAnalysis = analysisData["analyzed description"];
+          console.log("🔍 [GEMINI] Final description:", imageAnalysis);
+          
+          // Store the analysis results in Firebase
+          await updateDoc(doc(db, "Dashboard Inputs", docRef.id), {
+            "analyzed description": imageAnalysis
+          });
+          console.log("Document updated with image analysis");
+          
+          // Run image similarity search and log results (do not show in UI)
+          try {
+            console.log("🔍 [SIMILARITY] Running image-based product similarity search...");
+            const imageSimilarityResponse = await fetch("/api/image-search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                productName: data.name,
+                analyzedDescription: imageAnalysis,
+                imageSearch: true
+              }),
+              signal: controller.signal
+            });
+            
+            if (imageSimilarityResponse.ok) {
+              const similarityResults = await imageSimilarityResponse.json();
               
-              if (imageSimilarityResponse.ok) {
-                const similarityResults = await imageSimilarityResponse.json();
-                console.log(`🔍 [SIMILARITY] Image search found ${similarityResults.totalResults} similar products`);
+              // Log the total count
+              console.log(`🔍 [SIMILARITY] Image search found ${similarityResults.totalResults} similar products based on image analysis`);
+              
+              // Extract top results
+              const topItems = similarityResults.results && similarityResults.results.length > 0 
+                ? similarityResults.results.slice(0, 5) 
+                : [];
+              
+              // Force each result to be logged separately rather than as an array
+              if (topItems.length > 0) {
+                console.log("🔍 [SIMILARITY] Most similar items:");
+                
+                // Log each item individually with string concatenation
+                for (let i = 0; i < topItems.length; i++) {
+                  const item = topItems[i];
+                  const itemName = item.name || 'Unnamed';
+                  const collectionName = item.collection || 'Unknown';
+                  const docId = item.id || 'No ID';
+                  const scoreValue = typeof item.score === 'number' ? item.score.toFixed(3) : 'N/A';
+                  
+                  // Log as plain text
+                  console.log("Item " + (i+1) + ": \"" + itemName + "\" - Collection: \"" + collectionName + "\", ID: \"" + docId + "\" (Score: " + scoreValue + ")");
+                }
+                
+                // Also log simple collection:id pairs
+                console.log("🔍 [SIMILARITY] Quick reference - collection:id pairs:");
+                for (let i = 0; i < topItems.length; i++) {
+                  const item = topItems[i];
+                  console.log(item.collection + " : " + item.id);
+                }
+              } else {
+                console.log("🔍 [SIMILARITY] No similar items found");
               }
-            } catch (similarityError) {
-              console.error("🔍 [SIMILARITY] Error in image similarity search:", similarityError);
-              // Continue with normal flow even if similarity search fails
+            } else {
+              console.error("🔍 [SIMILARITY] Image search failed");
             }
+          } catch (similarityError) {
+            console.error("🔍 [SIMILARITY] Error in image similarity search:", similarityError);
+            // Continue with normal flow even if similarity search fails
           }
         } catch (imageError) {
           console.error("Image processing failed:", imageError);
@@ -149,14 +180,16 @@ export function ProductAnalysis({ onAnalysisStateChange, onReportStateChange }: 
         }
       }
       
-      // Prepare request body for price recommendation
+      // Always include text data (name, description, category) if available
+      // If image analysis is available, include it as well, but don't make it an exclusive image search
+      // This way, we combine both text and image search capabilities
       const requestBody = {
         query: data.name || "Image Search",
         ...(data.description && { description: data.description }),
         ...(data.category && { category: data.category }),
-        // Only include image analysis if we have it
         ...(imageAnalysis && { 
           "analyzed description": imageAnalysis,
+          // Only set imageSearch to true if there's no text data available
           imageSearch: !data.name && !data.description && !data.category
         })
       };

@@ -1,9 +1,5 @@
 import { NextResponse } from 'next/server';
-import { NextRequest } from 'next/server';
-import { performSearch } from '@/lib/search/search-service';
-
-// Set max duration to 1 minute (60 seconds)
-export const maxDuration = 60;
+import { getApiUrl } from '@/lib/utils/api-helpers';
 
 interface PriceData {
   original: number;
@@ -25,7 +21,7 @@ interface PriceInsight {
   impact: 'positive' | 'negative' | 'neutral';
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   const startTime = performance.now();
   const stats = {
     timings: {
@@ -51,44 +47,80 @@ export async function POST(req: NextRequest) {
   try {
     console.log('Price recommendation API called');
     const body = await req.json();
-    const { query, description, category, analyzedDescription, imageSearch } = body;
+    const { query, description, category, "analyzed description": analyzedDescription, imageSearch } = body;
     
-    console.log('Request data:', body);
+    console.log('Request data:', { query, description, category, analyzedDescription, imageSearch });
 
-    if (!query && !analyzedDescription) {
-      return NextResponse.json(
-        { success: false, error: 'Either query or analyzedDescription is required' },
-        { status: 400 }
-      );
+    // Only require query if not doing an image search
+    if (!imageSearch && !query) {
+      console.log('Error: Product query is required for text search');
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Product query is required for text search' 
+      }, { status: 400 });
     }
 
-    console.log('Searching for:', query ? `"${query}"` : 'analyzed image');
-    console.log('Calling search service with query:', query);
+    // Construct a comprehensive search query
+    const searchQuery = [
+      query || "Image Search",
+      description || '',
+      category || ''
+    ].filter(Boolean).join(' ');
+
+    console.log(`Searching for: "${searchQuery}"`);
+
+    // Use our advanced search API to find similar products
+    const searchStartTime = performance.now();
+    console.log('Calling search API with query:', searchQuery);
+    const hasImageAnalysis = !!analyzedDescription;
     
-    // Call search service with the request object
-    const searchResults = await performSearch({
-      query,
-      analyzedDescription,
-      imageSearch,
-      request: req
+    const searchRequestBody = { 
+      query: searchQuery,
+      ...(hasImageAnalysis && { 
+        analyzedDescription, 
+        imageSearch: true 
+      })
+    };
+    
+    console.log('Search request body:', JSON.stringify(searchRequestBody).substring(0, 200) + (JSON.stringify(searchRequestBody).length > 200 ? '...' : ''));
+    
+    const searchResponse = await fetch(getApiUrl('search'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(searchRequestBody)
     });
     
-    if (!searchResults.success) {
-      console.error('Search service returned error:', searchResults.error);
-      throw new Error(searchResults.error || 'Search failed');
+    stats.timings.search = performance.now() - searchStartTime;
+    console.log(`Search completed in ${stats.timings.search.toFixed(2)}ms`);
+    console.log('Search API response status:', searchResponse.status);
+
+    if (!searchResponse.ok) {
+      const errorText = await searchResponse.text();
+      console.error(`Search API failed: ${searchResponse.status}`, errorText);
+      throw new Error(`Search API failed: ${searchResponse.status}`);
+    }
+
+    const searchData = await searchResponse.json();
+    const analysisStartTime = performance.now();
+
+    if (!searchData.success) {
+      console.error('Search API returned error:', searchData.error);
+      throw new Error(searchData.error || 'Search failed');
     }
 
     // Update statistics
-    stats.results.totalProducts = searchResults.totalProducts || 0;
-    stats.results.relevantProducts = searchResults.totalResults || 0;
-    stats.results.collections = Object.keys(searchResults.collectionStats || {}).length;
+    stats.results.totalProducts = searchData.totalProducts || 0;
+    stats.results.relevantProducts = searchData.totalResults || 0;
+    stats.results.collections = Object.keys(searchData.collectionStats || {}).length;
 
     console.log(`Found ${stats.results.relevantProducts} similar products out of ${stats.results.totalProducts} total products`);
     console.log(`Searching across ${stats.results.collections} collections`);
 
     // Process search results to extract competitors with valid pricing
     console.log('Processing search results to extract competitors');
-    const validProducts = searchResults.results.filter((product: any) => 
+    const validProducts = searchData.results.filter((product: any) => 
       product.price?.original && 
       product.store?.name && 
       product.score > 0.3
@@ -190,7 +222,7 @@ export async function POST(req: NextRequest) {
       `Analysis completed in ${(performance.now() - startTime).toFixed(2)}ms`
     ];
 
-    stats.timings.analysis = performance.now() - (performance.now() - startTime);
+    stats.timings.analysis = performance.now() - analysisStartTime;
     stats.timings.total = performance.now() - startTime;
 
     return NextResponse.json({

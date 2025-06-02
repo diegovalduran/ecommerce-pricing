@@ -15,18 +15,9 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Download } from "lucide-react"
 import debounce from 'lodash/debounce'
-import { QueryDocumentSnapshot, DocumentData } from 'firebase/firestore'
 
 // Cache for collection data
 const collectionCache = new Map<string, Product[]>()
-
-// Add timeout utility
-const withTimeout = async (promise: Promise<any>, timeoutMs: number) => {
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Operation timed out')), timeoutMs);
-  });
-  return Promise.race([promise, timeoutPromise]);
-};
 
 export default function DataHubPage() {
   const [searchQuery, setSearchQuery] = useState("")
@@ -143,124 +134,73 @@ export default function DataHubPage() {
     setCompetitorProduct(product);
   };
 
-  // Function to fetch a single collection with timeout
+  // Function to fetch a single collection
   const fetchCollection = async (collectionName: string): Promise<Product[]> => {
     // Check cache first
     if (collectionCache.has(collectionName)) {
-      return collectionCache.get(collectionName)!;
+      return collectionCache.get(collectionName)!
     }
 
     try {
-      let allProducts: Product[] = [];
-      let lastDoc = null;
-      let hasMore = true;
-      const BATCH_SIZE = 50; // Keep reduced batch size for better performance
-      const MAX_RETRIES = 3;
-      let retryCount = 0;
+      let allProducts: Product[] = []
+      let lastDoc = null
+      let hasMore = true
       
-      while (hasMore && retryCount < MAX_RETRIES) {
-        try {
-          let q = query(
-            collection(db, collectionName),
-            limit(BATCH_SIZE)
-          );
-          
-          if (lastDoc) {
-            q = query(
-              collection(db, collectionName),
-              startAfter(lastDoc),
-              limit(BATCH_SIZE)
-            );
-          }
-          
-          // Add timeout to getDocs
-          const snapshot = await withTimeout(getDocs(q), 60000); // 60 second timeout
-          
-          const productsFromBatch = snapshot.docs.map((doc: QueryDocumentSnapshot<DocumentData>) => {
-            const data = doc.data()
-            const collectionParts = collectionName.split('-')
-            
-            const category = collectionParts[1] || data.category || 'Unknown'
-            const productType = collectionParts.slice(2).join(' ')
-              .replace(/-/g, ' ')
-              .split(' ')
-              .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-              .join(' ')
-
-            return {
-              ...data,
-              productId: doc.id,
-              category: category.toUpperCase(),
-              productType: productType || 'Unknown'
-            }
-          }) as Product[]
-          
-          allProducts = [...allProducts, ...productsFromBatch]
-          
-          lastDoc = snapshot.docs[snapshot.docs.length - 1]
-          hasMore = snapshot.docs.length === BATCH_SIZE // Only continue if we got a full batch
-        } catch (error) {
-          console.error(`Error fetching batch from ${collectionName}:`, error);
-          retryCount++;
-          if (retryCount >= MAX_RETRIES) {
-            throw error;
-          }
-          // Wait before retrying (exponential backoff)
-          await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000)));
+      while (hasMore) {
+        let q = query(collection(db, collectionName))
+        if (lastDoc) {
+          q = query(collection(db, collectionName), startAfter(lastDoc))
         }
+        
+        const snapshot = await getDocs(q)
+        const productsFromBatch = snapshot.docs.map(doc => {
+          const data = doc.data()
+          const collectionParts = collectionName.split('-')
+          
+          const category = collectionParts[1] || data.category || 'Unknown'
+          const productType = collectionParts.slice(2).join(' ')
+            .replace(/-/g, ' ')
+            .split(' ')
+            .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ')
+
+          return {
+            ...data,
+            productId: doc.id,
+            category: category.toUpperCase(),
+            productType: productType || 'Unknown'
+          }
+        }) as Product[]
+        
+        allProducts = [...allProducts, ...productsFromBatch]
+        
+        lastDoc = snapshot.docs[snapshot.docs.length - 1]
+        hasMore = snapshot.docs.length > 0
       }
 
       // Cache the results
-      collectionCache.set(collectionName, allProducts);
-      return allProducts;
-    } catch (error) {
-      console.error(`Error fetching collection ${collectionName}:`, error);
-      return [];
-    }
-  };
+      collectionCache.set(collectionName, allProducts)
+      return allProducts
 
-  // Function to fetch multiple collections in parallel with rate limiting and timeout
-  const fetchCollectionsParallel = async (collectionNames: string[]) => {
-    const BATCH_SIZE = 2; // Keep reduced batch size for better reliability
-    const results: Product[][] = [];
-    
-    for (let i = 0; i < collectionNames.length; i += BATCH_SIZE) {
-      const batch = collectionNames.slice(i, i + BATCH_SIZE);
-      try {
-        // Add timeout for each batch
-        const batchPromise = Promise.all(
-          batch.map(name => fetchCollection(name))
-        );
-        
-        const batchResults = await withTimeout(batchPromise, 60000); // 60 second timeout per batch
-        results.push(...batchResults);
-      } catch (error) {
-        console.error(`Error processing batch ${i/BATCH_SIZE + 1}:`, error);
-        // Continue with next batch even if this one failed
-        continue;
-      }
-      
-      // Add a longer delay between batches to prevent rate limiting
-      if (i + BATCH_SIZE < collectionNames.length) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Keep 500ms delay between batches
-      }
+    } catch (error) {
+      console.error(`Error fetching collection ${collectionName}:`, error)
+      return []
     }
-    
-    return results.flat();
-  };
+  }
+
+  // Function to fetch multiple collections in parallel
+  const fetchCollectionsParallel = async (collectionNames: string[]) => {
+    const results = await Promise.all(
+      collectionNames.map(name => fetchCollection(name))
+    )
+    return results.flat()
+  }
 
   useEffect(() => {
     const fetchProducts = async () => {
-      setIsLoading(true);
-      setError(null); // Reset error state
-      
+      setIsLoading(true)
       try {
-        // Add timeout to collections fetch
-        const collectionsResponse = await withTimeout(
-          fetch('/api/collections'),
-          60000 // 60 second timeout
-        );
-        
+        const collectionsResponse = await fetch('/api/collections')
         if (!collectionsResponse.ok) {
           throw new Error(`API returned ${collectionsResponse.status}`)
         }
@@ -295,9 +235,6 @@ export default function DataHubPage() {
       } catch (error) {
         console.error('Error fetching products:', error)
         setError(error instanceof Error ? error.message : 'Failed to fetch products')
-        // Clear products on error
-        setProducts([]);
-        setFilteredProducts([]);
       } finally {
         setIsLoading(false)
       }
